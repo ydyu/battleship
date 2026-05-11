@@ -13,9 +13,17 @@ This is a variant of the classic Battleship game where each ship provides a uniq
 ## Project Structure
 
 - `sim.py`: A simulation harness to test game balance and AI performance.
-- `game.py`: (Planned) Interactive game implementation.
+- `game.py`: Interactive game implementation.
 
-## How to Run Simulation
+## How to Run
+
+### Interactive Game
+
+```bash
+python game.py
+```
+
+### Simulation
 
 ```bash
 python sim.py
