@@ -1,5 +1,5 @@
 import os
-from engine import Board, SHIPS, SHOT_PATTERNS, BOARD_SIZE
+from engine import Board, SHIPS, SHOT_PATTERNS, BOARD_SIZE, BattleshipMatch
 from ai import AI
 
 def clear_screen():
@@ -33,13 +33,16 @@ def show_patterns():
 
 class Game:
     def __init__(self):
-        self.player_board = Board()
-        self.player_board.place_randomly(SHIPS)
-        
-        self.ai_board = Board()
-        self.ai_board.place_randomly(SHIPS)
-        
+        self.match = BattleshipMatch()
         self.ai_agent = AI(difficulty='experiment')
+
+    @property
+    def player_board(self):
+        return self.match.board_a
+
+    @property
+    def ai_board(self):
+        return self.match.board_b
 
     def render_board(self, reveal_enemy=False):
         """Displays the player's board and the tracking board for enemy shots."""
@@ -106,11 +109,17 @@ class Game:
         while True:
             print("\n--- YOUR TURN ---")
             print("Available Ships (Weapons):")
-            for i, ship in enumerate(active_ships):
-                print(f" {i}: {ship.ljust(12)} Pattern: {len(SHOT_PATTERNS[ship])} squares")
+            
+            valid_options = {}
+            for i, (name, _) in enumerate(SHIPS, 1):
+                if name in active_ships:
+                    print(f" {i}: {name.ljust(12)} Pattern: {len(SHOT_PATTERNS[name])} squares")
+                    valid_options[str(i)] = name
+            
             print(" ?: Show visual pattern guide")
             
-            choice = input(f"\nSelect ship to fire with (0-{len(active_ships)-1} or ?): ")
+            prompt_opts = "/".join(sorted(valid_options.keys()))
+            choice = input(f"\nSelect ship to fire with ({prompt_opts} or ?): ")
             
             if choice == "?":
                 clear_screen()
@@ -120,15 +129,11 @@ class Game:
                 self.render_board()
                 continue
                 
-            try:
-                idx = int(choice)
-                if 0 <= idx < len(active_ships):
-                    ship_name = active_ships[idx]
-                    break
-                else:
-                    print(f"Please enter a number between 0 and {len(active_ships)-1}.")
-            except ValueError:
-                print("Invalid input. Please enter a number or '?'.")
+            if choice in valid_options:
+                ship_name = valid_options[choice]
+                break
+            else:
+                print(f"Invalid selection. Please enter one of: {', '.join(sorted(valid_options.keys()))}")
 
         target = None
         while target is None:
@@ -162,8 +167,7 @@ class Game:
             ai_active_start = list(self.ai_board.active_ships.keys())
 
             # Check for existing game over (from previous round resolution)
-            player_dead = len(player_active_start) == 0
-            ai_dead = len(ai_active_start) == 0
+            player_dead, ai_dead = self.match.is_game_over()
 
             if player_dead or ai_dead:
                 clear_screen()
@@ -180,18 +184,14 @@ class Game:
                 break
                 
             # --- PHASE 2: PLAYER SELECTION ---
-            active_ships_sorted = sorted(player_active_start)
-            ship_name, (tx, ty) = self.get_player_input(active_ships_sorted)
-            pattern = SHOT_PATTERNS[ship_name]
+            ship_name, (tx, ty) = self.get_player_input(player_active_start)
             
             # --- PHASE 3: AI SELECTION (Simultaneous) ---
             # AI selects move based on pre-shot state
             atx, aty, ai_weapon = self.ai_agent.select_move(self.player_board, ai_active_start)
-            ai_pattern = SHOT_PATTERNS[ai_weapon]
 
             # --- PHASE 4: SIMULTANEOUS RESOLUTION ---
-            hits = self.ai_board.fire(tx, ty, pattern)
-            ai_hits = self.player_board.fire(atx, aty, ai_pattern)
+            hits, ai_hits = self.match.resolve_turn((tx, ty, ship_name), (atx, aty, ai_weapon))
             
             clear_screen()
             self.render_board()

@@ -112,3 +112,33 @@ class Board:
             if (x, y) in coords:
                 return name[0].upper()
         return None
+
+class BattleshipMatch:
+    """Encapsulates the simultaneous turn mechanism for a game of Tactical Battleship."""
+    def __init__(self, board_size: int = BOARD_SIZE):
+        self.board_a = Board(board_size)
+        self.board_a.place_randomly(SHIPS)
+        self.board_b = Board(board_size)
+        self.board_b.place_randomly(SHIPS)
+
+    def resolve_turn(self, move_a: Tuple[int, int, str], move_b: Tuple[int, int, str]) -> Tuple[int, int]:
+        """
+        Executes a simultaneous turn resolution.
+        move_a: (tx, ty, weapon_name) fired by Side A against Side B.
+        move_b: (tx, ty, weapon_name) fired by Side B against Side A.
+        Returns: (hits_scored_by_a, hits_scored_by_b)
+        """
+        tx_a, ty_a, weapon_a = move_a
+        tx_b, ty_b, weapon_b = move_b
+        
+        hits_by_a = self.board_b.fire(tx_a, ty_a, SHOT_PATTERNS[weapon_a])
+        hits_by_b = self.board_a.fire(tx_b, ty_b, SHOT_PATTERNS[weapon_b])
+        
+        return hits_by_a, hits_by_b
+
+    def is_game_over(self) -> Tuple[bool, bool]:
+        """
+        Checks game over state.
+        Returns: (side_a_defeated, side_b_defeated)
+        """
+        return self.board_a.is_game_over(), self.board_b.is_game_over()

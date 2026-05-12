@@ -1,5 +1,5 @@
 import argparse
-from engine import Board, SHIPS, SHOT_PATTERNS, BOARD_SIZE
+from engine import Board, SHIPS, SHOT_PATTERNS, BOARD_SIZE, BattleshipMatch
 from ai import AI
 
 # ==========================================
@@ -13,11 +13,7 @@ class SimulationHarness:
 
     def run_single_game(self) -> tuple:
         """Runs one complete simultaneous-turn game and returns (winner, turns)."""
-        board_a = Board() # Side A's board (attacked by B)
-        board_a.place_randomly(SHIPS)
-        
-        board_b = Board() # Side B's board (attacked by A)
-        board_b.place_randomly(SHIPS)
+        match = BattleshipMatch()
         
         agent_a = AI(difficulty=self.side_a_diff)
         agent_b = AI(difficulty=self.side_b_diff)
@@ -27,20 +23,18 @@ class SimulationHarness:
             turns += 1
             
             # --- PHASE 1: PRE-FIRE EVALUATION (SIMULTANEOUS) ---
-            active_a_start = list(board_a.active_ships.keys())
-            active_b_start = list(board_b.active_ships.keys())
+            active_a_start = list(match.board_a.active_ships.keys())
+            active_b_start = list(match.board_b.active_ships.keys())
             
             # --- PHASE 2: TARGET SELECTION ---
-            tx_a, ty_a, weapon_a = agent_a.select_move(board_b, active_a_start)
-            tx_b, ty_b, weapon_b = agent_b.select_move(board_a, active_b_start)
+            move_a = agent_a.select_move(match.board_b, active_a_start)
+            move_b = agent_b.select_move(match.board_a, active_b_start)
             
             # --- PHASE 3: SIMULTANEOUS RESOLUTION ---
-            board_b.fire(tx_a, ty_a, SHOT_PATTERNS[weapon_a])
-            board_a.fire(tx_b, ty_b, SHOT_PATTERNS[weapon_b])
+            match.resolve_turn(move_a, move_b)
             
             # --- PHASE 4: EVALUATION ---
-            over_a = board_a.is_game_over()
-            over_b = board_b.is_game_over()
+            over_a, over_b = match.is_game_over()
             
             if over_a and over_b:
                 return 'Draw', turns
