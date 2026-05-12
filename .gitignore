@@ -8,3 +8,10 @@ ENV/
 .env
 .vscode/
 .idea/
+
+# Web artifacts
+node_modules/
+dist/
+.DS_Store
+dist-ssr
+*.local
