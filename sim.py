@@ -1,64 +1,131 @@
-from engine import Board, Agent, SHIPS, SHOT_PATTERNS, BOARD_SIZE
+import argparse
+from engine import Board, SHIPS, SHOT_PATTERNS, BOARD_SIZE
+from ai import AI
 
 # ==========================================
 # 4. SIMULATION HARNESS (Independent Loop)
 # ==========================================
 class SimulationHarness:
-    def __init__(self, iterations: int = 1000):
+    def __init__(self, iterations: int = 100, side_a_diff: str = 'expert', side_b_diff: str = 'expert'):
         self.iterations = iterations
+        self.side_a_diff = side_a_diff
+        self.side_b_diff = side_b_diff
 
-    def run_single_game(self) -> int:
-        """Runs one complete game and returns the number of turns it took."""
-        board = Board()
-        board.place_randomly(SHIPS)
-        agent = Agent()
+    def run_single_game(self) -> tuple:
+        """Runs one complete simultaneous-turn game and returns (winner, turns)."""
+        board_a = Board() # Side A's board (attacked by B)
+        board_a.place_randomly(SHIPS)
+        
+        board_b = Board() # Side B's board (attacked by A)
+        board_b.place_randomly(SHIPS)
+        
+        agent_a = AI(difficulty=self.side_a_diff)
+        agent_b = AI(difficulty=self.side_b_diff)
         
         turns = 0
-        while not board.is_game_over():
+        while True:
             turns += 1
             
-            # 1. Agent evaluates state and picks weapon
-            active_ships = list(board.active_ships.keys())
-            weapon_choice = agent.choose_weapon(active_ships)
-            pattern = SHOT_PATTERNS[weapon_choice]
+            # --- PHASE 1: PRE-FIRE EVALUATION (SIMULTANEOUS) ---
+            active_a_start = list(board_a.active_ships.keys())
+            active_b_start = list(board_b.active_ships.keys())
             
-            # 2. Agent picks target coordinate
-            tx, ty = agent.generate_target(board.size, board.shots_fired)
+            # --- PHASE 2: TARGET SELECTION ---
+            tx_a, ty_a, weapon_a = agent_a.select_move(board_b, active_a_start)
+            tx_b, ty_b, weapon_b = agent_b.select_move(board_a, active_b_start)
             
-            # 3. Fire and record results
-            hits = board.fire(tx, ty, pattern)
+            # --- PHASE 3: SIMULTANEOUS RESOLUTION ---
+            board_b.fire(tx_a, ty_a, SHOT_PATTERNS[weapon_a])
+            board_a.fire(tx_b, ty_b, SHOT_PATTERNS[weapon_b])
             
-            # (Optional) Feed hit data back to agent for Target mode logic
-            if hits > 0:
-                agent.known_hits.add((tx, ty))
-                
-            # Failsafe for infinite loops during testing
+            # --- PHASE 4: EVALUATION ---
+            over_a = board_a.is_game_over()
+            over_b = board_b.is_game_over()
+            
+            if over_a and over_b:
+                return 'Draw', turns
+            if over_b:
+                return 'A', turns
+            if over_a:
+                return 'B', turns
+            
+            # Failsafe
             if turns > (BOARD_SIZE * BOARD_SIZE): 
-                break
-                
-        return turns
+                return 'Draw', turns
 
     def run_batch(self):
         """Executes the simulation loop and aggregates the metrics."""
-        print(f"Starting simulation of {self.iterations} games...")
-        results = []
+        print(f"Simulation: {self.side_a_diff} (A) vs {self.side_b_diff} (B)")
+        print(f"Mode: SIMULTANEOUS TURNS")
+        print(f"Running {self.iterations} games...")
         
-        for _ in range(self.iterations):
-            turns_to_win = self.run_single_game()
-            results.append(turns_to_win)
+        wins_a = 0
+        wins_b = 0
+        draws = 0
+        
+        turns_a = []
+        turns_b = []
+        turns_draw = []
+        
+        for i in range(self.iterations):
+            winner, turns = self.run_single_game()
             
-        avg_turns = sum(results) / len(results)
-        min_turns = min(results)
-        max_turns = max(results)
+            if winner == 'A':
+                wins_a += 1
+                turns_a.append(turns)
+            elif winner == 'B':
+                wins_b += 1
+                turns_b.append(turns)
+            else:
+                draws += 1
+                turns_draw.append(turns)
+            
+            if (i + 1) % (max(1, self.iterations // 10)) == 0:
+                print(f" Progress: {i+1}/{self.iterations}...")
+            
+        print("\n" + "="*40)
+        print("SIMULATION RESULTS")
+        print("="*40)
         
-        print("--- Simulation Complete ---")
-        print(f"Average Turns to Win: {avg_turns:.2f}")
-        print(f"Fastest Game: {min_turns} turns")
-        print(f"Longest Game: {max_turns} turns")
+        # --- Side A Report ---
+        print(f"Side A ({self.side_a_diff.upper()}):")
+        print(f"  Wins:      {wins_a} ({wins_a/self.iterations*100:.1f}%)")
+        if turns_a:
+            print(f"  Avg Turns: {sum(turns_a)/len(turns_a):.2f}")
+            print(f"  Min/Max:   {min(turns_a)} / {max(turns_a)}")
+        else:
+            print(f"  Avg Turns: N/A")
+            
+        # --- Side B Report ---
+        print(f"\nSide B ({self.side_b_diff.upper()}):")
+        print(f"  Wins:      {wins_b} ({wins_b/self.iterations*100:.1f}%)")
+        if turns_b:
+            print(f"  Avg Turns: {sum(turns_b)/len(turns_b):.2f}")
+            print(f"  Min/Max:   {min(turns_b)} / {max(turns_b)}")
+        else:
+            print(f"  Avg Turns: N/A")
+
+        # --- Draw Report ---
+        if draws > 0:
+            print(f"\nDraws:       {draws} ({draws/self.iterations*100:.1f}%)")
+            print(f"  Avg Turns: {sum(turns_draw)/len(turns_draw):.2f}")
+
+        # --- Global Stats ---
+        all_turns = turns_a + turns_b + turns_draw
+        print("\n" + "-"*20)
+        print(f"Global Average: {sum(all_turns)/len(all_turns):.2f} turns per game")
+        print("="*40)
 
 # ==========================================
 # EXECUTION
 # ==========================================
 if __name__ == "__main__":
-    harness = SimulationHarness(iterations=1000)
+    parser = argparse.ArgumentParser(description='Tactical Battleship Simulation Harness')
+    parser.add_argument('--iter', type=int, default=100, help='Number of iterations (default: 100)')
+    parser.add_argument('--sideA', type=str, default='expert', choices=['novice', 'medium', 'expert', 'experiment'], help='AI for Side A')
+    parser.add_argument('--sideB', type=str, default='expert', choices=['novice', 'medium', 'expert', 'experiment'], help='AI for Side B')
+    
+    args = parser.parse_args()
+    
+    harness = SimulationHarness(iterations=args.iter, side_a_diff=args.sideA, side_b_diff=args.sideB)
     harness.run_batch()

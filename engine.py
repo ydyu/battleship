@@ -39,8 +39,12 @@ class Board:
         self.hits_received: Set[Tuple[int, int]] = set()
         # Track misses: set of (x, y) coordinates
         self.misses: Set[Tuple[int, int]] = set()
-        # Track active ships: {ship_name: set_of_coordinates}
+        # Track active ships: {ship_name: set_of_coordinates} (remaining)
         self.active_ships: Dict[str, Set[Tuple[int, int]]] = {}
+        # Track initial ship layouts: {ship_name: set_of_coordinates} (all)
+        self.ship_layouts: Dict[str, Set[Tuple[int, int]]] = {}
+        # Track coordinates of ships that are fully sunk
+        self.sunk_cells: Set[Tuple[int, int]] = set()
         
     def place_randomly(self, ships: List[Tuple[str, int]]):
         """Randomly places ships for the setup."""
@@ -63,7 +67,8 @@ class Board:
                 if valid:
                     for cx, cy in coords:
                         self.grid[cx][cy] = 1
-                    self.active_ships[name] = coords
+                    self.active_ships[name] = set(coords)
+                    self.ship_layouts[name] = set(coords)
                     placed = True
 
     def fire(self, target_x: int, target_y: int, pattern: List[Tuple[int, int]]) -> int:
@@ -92,38 +97,18 @@ class Board:
             if (x, y) in coords:
                 coords.remove((x, y))
                 if not coords:
-                    del self.active_ships[ship_name] # Ship is sunk
+                    # Ship is sunk - add all its original coordinates to sunk_cells
+                    self.sunk_cells.update(self.ship_layouts[ship_name])
+                    del self.active_ships[ship_name] 
                 break
 
     def is_game_over(self) -> bool:
         """Win condition check."""
         return len(self.active_ships) == 0
 
-
-# ==========================================
-# 3. ALGORITHM / STRATEGY (The AI)
-# ==========================================
-class Agent:
-    def __init__(self):
-        # The agent keeps track of its own knowledge here
-        self.known_hits: Set[Tuple[int, int]] = set()
-
-    def choose_weapon(self, active_ships: List[str]) -> str:
-        """Strategy for which ship to fire from."""
-        # Simple rule: Always use the biggest weapon available
-        for weapon in ["Carrier", "Battleship", "Submarine", "Destroyer", "PatrolBoat"]:
-            if weapon in active_ships:
-                return weapon
-        return "PatrolBoat"
-
-    def generate_target(self, board_size: int, history: Set[Tuple[int, int]]) -> Tuple[int, int]:
-        """
-        Strategy for WHERE to shoot. 
-        """
-        # Minimal implementation: Pure random hunt
-        while True:
-            x = random.randint(0, board_size - 1)
-            y = random.randint(0, board_size - 1)
-            # Prevent targeting the exact same center peg twice
-            if (x, y) not in history: 
-                return x, y
+    def get_ship_symbol(self, x: int, y: int) -> str:
+        """Returns the single-letter symbol for the ship at (x, y), or None."""
+        for name, coords in self.ship_layouts.items():
+            if (x, y) in coords:
+                return name[0].upper()
+        return None
