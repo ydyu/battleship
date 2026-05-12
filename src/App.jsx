@@ -1,34 +1,36 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Target, Ship, RefreshCw, AlertCircle, Crosshair, Navigation, ChevronDown, ChevronUp, Trophy, Skull, Shield, RotateCw, Trash2, Dices, Radar, Bug, FastForward, Brain, Volume2, VolumeX } from 'lucide-react';
+import { AI, placeFleetRandomly } from './ai';
+import {
+  BOARD_SIZE,
+  SHIPS,
+  SHOT_PATTERNS,
+  cloneBoard,
+  createEmptyBoard,
+  rebuildBoardState,
+  resolveSimultaneousTurn,
+} from './engine';
 
-// ==========================================
-// 1. CONFIGURATION
-// ==========================================
-const BOARD_SIZE = 10;
+const buildMiniIcons = (shotPatterns) =>
+  Object.fromEntries(
+    Object.entries(shotPatterns).map(([shipName, pattern]) => {
+      const xs = pattern.map(([x]) => x);
+      const ys = pattern.map(([, y]) => y);
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
+      const cols = maxX - minX + 1;
+      const rows = maxY - minY + 1;
+      const active = pattern
+        .map(([x, y]) => ((y - minY) * cols) + (x - minX))
+        .sort((a, b) => a - b);
 
-const SHIPS = [
-  { name: "Carrier", size: 5 },
-  { name: "Battleship", size: 4 },
-  { name: "Submarine", size: 3 },
-  { name: "Destroyer", size: 3 },
-  { name: "PatrolBoat", size: 2 }
-];
+      return [shipName, { cols, rows, active }];
+    })
+  );
 
-const SHOT_PATTERNS = {
-  "Carrier": [[0, 0], [1, 1], [-1, -1], [-1, 1], [1, -1]], 
-  "Battleship": [[0, 0], [1, 0], [0, 1], [1, 1]],       
-  "Submarine": [[0, 0], [1, 0], [2, 0]],               
-  "Destroyer": [[0, 0], [0, 1], [0, 2]],               
-  "PatrolBoat": [[0, 0]]                               
-};
-
-const MINI_ICONS = {
-  "Carrier": { cols: 3, rows: 3, active: [0, 2, 4, 6, 8] },
-  "Battleship": { cols: 2, rows: 2, active: [0, 1, 2, 3] },
-  "Submarine": { cols: 3, rows: 1, active: [0, 1, 2] },
-  "Destroyer": { cols: 1, rows: 3, active: [0, 1, 2] },
-  "PatrolBoat": { cols: 1, rows: 1, active: [0] }
-};
+const MINI_ICONS = buildMiniIcons(SHOT_PATTERNS);
 
 // ==========================================
 // 2. SFX SYNTHESIZER (Web Audio API)
@@ -131,253 +133,10 @@ const playSynth = (type) => {
 };
 
 // ==========================================
-// 3. HELPER FUNCTIONS
-// ==========================================
-const createEmptyBoard = () => ({
-  grid: Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(0)),
-  shotsFired: new Set(),
-  hitsReceived: new Set(),
-  misses: new Set(),
-  activeShips: {},
-  shipLayouts: {}, 
-  sunkCells: new Set() 
-});
-
-const placeRandomly = () => {
-  const board = createEmptyBoard();
-
-  SHIPS.forEach(({ name, size }) => {
-    let placed = false;
-    while (!placed) {
-      const x = Math.floor(Math.random() * BOARD_SIZE);
-      const y = Math.floor(Math.random() * BOARD_SIZE);
-      const horizontal = Math.random() > 0.5;
-
-      let valid = true;
-      const coords = [];
-
-      for (let i = 0; i < size; i++) {
-        const nx = horizontal ? x + i : x;
-        const ny = horizontal ? y : y + i;
-
-        if (nx >= BOARD_SIZE || ny >= BOARD_SIZE || board.grid[nx][ny] === 1) {
-          valid = false;
-          break;
-        }
-        coords.push(`${nx},${ny}`);
-      }
-
-      if (valid) {
-        coords.forEach(c => {
-          const [cx, cy] = c.split(',').map(Number);
-          board.grid[cx][cy] = 1;
-        });
-        board.activeShips[name] = coords;
-        board.shipLayouts[name] = coords;
-        placed = true;
-      }
-    }
-  });
-
-  return board;
-};
-
-const cloneSet = (set) => new Set(set);
-const cloneBoard = (board) => ({
-  grid: board.grid.map(row => [...row]),
-  shotsFired: cloneSet(board.shotsFired),
-  hitsReceived: cloneSet(board.hitsReceived),
-  misses: cloneSet(board.misses),
-  activeShips: JSON.parse(JSON.stringify(board.activeShips)),
-  shipLayouts: board.shipLayouts, 
-  sunkCells: cloneSet(board.sunkCells)
-});
-
-const canTargetCell = (board, startX, startY, weapon) => {
-  const pattern = SHOT_PATTERNS[weapon];
-  return pattern.some(([dx, dy]) => {
-    const nx = startX + dx;
-    const ny = startY + dy;
-    return nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE && !board.shotsFired.has(`${nx},${ny}`);
-  });
-};
-
-// --- ELEGANT PROBABILITY DENSITY MAP ---
-const getHeatmap = (board, activeShipNames, unsunkHits, difficulty = 'expert') => {
-  const heatmap = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
-  let maxVal = 0;
-  
-  const isExpert = difficulty === 'expert';
-
-  // Find the absolute largest ship still alive on the board
-  const maxActiveSize = isExpert && activeShipNames.length > 0 
-    ? Math.max(...activeShipNames.map(name => SHIPS.find(s => s.name === name).size)) 
-    : 0;
-
-  // 1. CRIME SCENE ANALYSIS (Expert Only)
-  let maxCapacity = 0;
-  if (isExpert && unsunkHits.size > 0) {
-    unsunkHits.forEach(hitCoord => {
-      const [hx, hy] = hitCoord.split(',').map(Number);
-      
-      let left = 0;
-      for (let x = hx - 1; x >= 0; x--) {
-        const c = `${x},${hy}`;
-        if (board.misses.has(c) || board.sunkCells.has(c)) break;
-        left++;
-      }
-      let right = 0;
-      for (let x = hx + 1; x < BOARD_SIZE; x++) {
-        const c = `${x},${hy}`;
-        if (board.misses.has(c) || board.sunkCells.has(c)) break;
-        right++;
-      }
-      maxCapacity = Math.max(maxCapacity, left + 1 + right);
-
-      let up = 0;
-      for (let y = hy - 1; y >= 0; y--) {
-        const c = `${hx},${y}`;
-        if (board.misses.has(c) || board.sunkCells.has(c)) break;
-        up++;
-      }
-      let down = 0;
-      for (let y = hy + 1; y < BOARD_SIZE; y++) {
-        const c = `${hx},${y}`;
-        if (board.misses.has(c) || board.sunkCells.has(c)) break;
-        down++;
-      }
-      maxCapacity = Math.max(maxCapacity, up + 1 + down);
-    });
-  }
-
-  // 2. DEDUCE THE VICTIM (Expert Only)
-  let assumedWoundedShipName = null;
-  if (isExpert && unsunkHits.size > 0) {
-    const activeShipsSorted = activeShipNames
-      .map(name => SHIPS.find(s => s.name === name))
-      .sort((a, b) => b.size - a.size);
-    const assumedShip = activeShipsSorted.find(s => s.size <= maxCapacity) || activeShipsSorted[activeShipsSorted.length - 1];
-    assumedWoundedShipName = assumedShip.name;
-  }
-
-  // 3. GENERATE HEATMAP
-  activeShipNames.forEach(shipName => {
-    const size = SHIPS.find(s => s.name === shipName).size;
-    
-    // WEAPON ECONOMY AWARENESS:
-    // If the ship is the biggest threat left, it gets full size*size weight.
-    // If it's smaller, it's demoted to base weight 1 so the AI ignores it in open water.
-    const baseThreat = isExpert 
-      ? (size === maxActiveSize ? (size * size) : 1) 
-      : 1;
-
-    for (let y = 0; y < BOARD_SIZE; y++) {
-      for (let x = 0; x < BOARD_SIZE; x++) {
-        
-        // --- Horizontal Fit Check ---
-        let validH = true;
-        let overlapsH = 0;
-        for (let i = 0; i < size; i++) {
-          const nx = x + i;
-          if (nx >= BOARD_SIZE) { validH = false; break; }
-          const coord = `${nx},${y}`;
-          if (board.misses.has(coord) || board.sunkCells.has(coord)) { validH = false; break; }
-          if (unsunkHits.has(coord)) overlapsH++;
-        }
-
-        if (validH) {
-          const isGhost = isExpert && (overlapsH === 0 && shipName === assumedWoundedShipName);
-          
-          if (!isGhost) {
-            const weight = baseThreat * Math.pow(4, overlapsH);
-            for (let i = 0; i < size; i++) {
-              heatmap[x + i][y] += weight;
-              maxVal = Math.max(maxVal, heatmap[x + i][y]);
-            }
-          }
-        }
-
-        // --- Vertical Fit Check ---
-        if (size > 1) {
-          let validV = true;
-          let overlapsV = 0;
-          for (let i = 0; i < size; i++) {
-            const ny = y + i;
-            if (ny >= BOARD_SIZE) { validV = false; break; }
-            const coord = `${x},${ny}`;
-            if (board.misses.has(coord) || board.sunkCells.has(coord)) { validV = false; break; }
-            if (unsunkHits.has(coord)) overlapsV++;
-          }
-
-          if (validV) {
-            const isGhost = isExpert && (overlapsV === 0 && shipName === assumedWoundedShipName);
-            
-            if (!isGhost) {
-              const weight = baseThreat * Math.pow(4, overlapsV);
-              for (let i = 0; i < size; i++) {
-                heatmap[x][y + i] += weight;
-                maxVal = Math.max(maxVal, heatmap[x][y + i]);
-              }
-            }
-          }
-        }
-
-      }
-    }
-  });
-  
-  return { heatmap, maxVal };
-};
-
-// --- ACTION TARGETING SCORES ---
-const getTargetingScores = (targetBoard, activeShipNames, weapon, difficulty) => {
-  const unsunkHits = new Set([...targetBoard.hitsReceived].filter(c => !targetBoard.sunkCells.has(c)));
-  const { heatmap: rawHeatmap } = getHeatmap(targetBoard, activeShipNames, unsunkHits, difficulty);
-  
-  let maxScore = -1;
-  let bestMoves = [];
-
-  const pattern = SHOT_PATTERNS[weapon];
-
-  for (let x = 0; x < BOARD_SIZE; x++) {
-    for (let y = 0; y < BOARD_SIZE; y++) {
-      if (!canTargetCell(targetBoard, x, y, weapon)) continue;
-
-      let score = 0;
-      
-      pattern.forEach(([dx, dy]) => {
-        const nx = x + dx;
-        const ny = y + dy;
-        if (nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE) {
-          const coord = `${nx},${ny}`;
-          if (!targetBoard.shotsFired.has(coord)) {
-            score += rawHeatmap[nx][ny];
-          }
-        }
-      });
-
-      // EXPERT Parity Check: Essential to avoid useless adjacent shots in open ocean
-      if (difficulty === 'expert' && unsunkHits.size === 0) {
-        if ((x + y) % 2 === 0) score *= 2; 
-      }
-
-      if (score > maxScore) {
-        maxScore = score;
-        bestMoves = [{ x, y, weapon }];
-      } else if (score === maxScore) {
-        bestMoves.push({ x, y, weapon });
-      }
-    }
-  }
-
-  return { maxVal: maxScore, bestMoves };
-};
-
-// ==========================================
-// 4. SUB-COMPONENTS
+// 2. SUB-COMPONENTS
 // ==========================================
 
-const DifficultyButton = ({ level, currentDifficulty, phase, onSelect }) => {
+export const DifficultyButton = ({ level, currentDifficulty, phase, onSelect }) => {
   const isSelected = currentDifficulty === level;
   const isDisabled = phase === 'battle';
   
@@ -560,7 +319,7 @@ const FleetPanel = ({
   );
 };
 
-const SetupControlsPanel = ({ currentSetupShip, setupOrientation, setSetupOrientation, setPlayerBoard, setHoverCell }) => {
+export const SetupControlsPanel = ({ currentSetupShip, setupOrientation, setSetupOrientation, setPlayerBoard, setHoverCell }) => {
   return (
     <div className="w-full max-w-[340px] sm:max-w-[400px] mt-3 flex flex-col gap-2">
       
@@ -596,7 +355,7 @@ const SetupControlsPanel = ({ currentSetupShip, setupOrientation, setSetupOrient
 
       <div className="flex gap-2 w-full mt-1">
         <button 
-          onClick={() => setPlayerBoard(placeRandomly())} 
+          onClick={() => setPlayerBoard(placeFleetRandomly())} 
           className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white rounded-lg font-bold flex items-center justify-center gap-2 text-xs sm:text-sm transition-colors active:scale-95"
         >
           <Dices className="w-4 h-4"/> Randomize
@@ -615,7 +374,7 @@ const SetupControlsPanel = ({ currentSetupShip, setupOrientation, setSetupOrient
   );
 };
 
-const GameBoard = ({
+export const GameBoard = ({
   board,
   isEnemy,
   phase,
@@ -656,16 +415,13 @@ const GameBoard = ({
       const isHit = board.hitsReceived.has(coord);
       const isSunk = board.sunkCells.has(coord);
       const isMiss = board.misses.has(coord);
-      const isTargetable = !isSetup && isEnemy && turn === 'player' && phase === 'battle' && !isScrubbing && canTargetCell(board, x, y, selectedWeapon);
+      const isTargetable = !isSetup && isEnemy && turn === 'player' && phase === 'battle' && !isScrubbing && board.canTargetCell(x, y, selectedWeapon);
       
       const isPlayerHighlight = isEnemy && highlightCoords.includes(coord);
       const isAiHighlight = !isEnemy && highlightCoords.includes(coord);
       
-      const heatVal = activeHeatmap ? activeHeatmap.heatmap[x][y] : 0;
-      const maxHeat = activeHeatmap ? activeHeatmap.maxVal : 1;
-      const heatRatio = maxHeat > 0 ? heatVal / maxHeat : 0;
-      
-      const displayScore = maxHeat > 0 ? Math.round(heatRatio * 100) : 0;
+      const heatRatio = activeHeatmap ? activeHeatmap.heatmap[x][y] : 0;
+      const displayScore = Math.round(heatRatio * 100);
 
       let zIndex = "z-0";
       if (isHit || isSunk || isMiss || isPlayerHighlight || isAiHighlight || previewSet.has(coord)) {
@@ -688,12 +444,12 @@ const GameBoard = ({
           onMouseEnter={() => isSetup && !isEnemy && onCellMouseEnter && onCellMouseEnter([x, y])}
           onMouseLeave={() => isSetup && !isEnemy && onCellMouseLeave && onCellMouseLeave()}
           onClick={() => onCellClick(x, y)}
-          disabled={isScrubbing || (!isSetup && isEnemy && !canTargetCell(board, x, y, selectedWeapon)) || (isSetup && isEnemy)}
+          disabled={isScrubbing || (!isSetup && isEnemy && !board.canTargetCell(x, y, selectedWeapon)) || (isSetup && isEnemy)}
           className={cellClasses}
         >
           {isMiss && <div className="w-1.5 h-1.5 rounded-full bg-slate-400 pointer-events-none" />}
           
-          {showDebug && heatVal > 0 && !isFired && (
+          {showDebug && heatRatio > 0 && !isFired && (
             <div 
               className="absolute inset-0 z-10 pointer-events-none flex items-center justify-center text-[9px] sm:text-[11px] font-black text-orange-300 drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]"
               style={{ backgroundColor: `rgba(249, 115, 22, ${heatRatio * 0.35})` }}
@@ -768,33 +524,17 @@ const GameBoard = ({
 
   if (isSetup && hoverCell && currentSetupShip && !isEnemy) {
     const [hx, hy] = hoverCell;
-    let isValid = true;
-    const coords = [];
-    for (let i = 0; i < currentSetupShip.size; i++) {
-      const nx = setupOrientation === 'horizontal' ? hx + i : hx;
-      const ny = setupOrientation === 'horizontal' ? hy : hy + i;
-      if (nx >= BOARD_SIZE || ny >= BOARD_SIZE || board.grid[nx][ny] === 1) {
-        isValid = false;
-      }
-      coords.push(`${nx},${ny}`);
-    }
-
-    const rawMaxX = setupOrientation === 'horizontal' ? hx + currentSetupShip.size - 1 : hx;
-    const rawMaxY = setupOrientation === 'horizontal' ? hy : hy + currentSetupShip.size - 1;
-    const maxX = Math.min(rawMaxX, BOARD_SIZE - 1);
-    const maxY = Math.min(rawMaxY, BOARD_SIZE - 1);
-    const minX = hx;
-    const minY = hy;
+    const preview = board.getPlacementPreview(currentSetupShip.name, hx, hy, setupOrientation);
 
     hulls.push(
       <div
         key="preview-hull"
         style={{
-          gridColumn: `${minX + 1} / ${maxX + 2}`,
-          gridRow: `${minY + 1} / ${maxY + 2}`
+          gridColumn: `${preview.minX + 1} / ${preview.maxX + 2}`,
+          gridRow: `${preview.minY + 1} / ${preview.maxY + 2}`
         }}
         className={`pointer-events-none z-30 transition-all duration-75 border-2
-          ${isValid 
+          ${preview.valid 
             ? 'm-[2px] rounded-full border-dashed border-emerald-400 bg-emerald-400/30 shadow-[0_0_15px_rgba(52,211,153,0.4)]' 
             : 'm-0 rounded-[2px] border-red-500 bg-red-500/40 shadow-none'}
         `}
@@ -948,10 +688,11 @@ export default function App() {
   const [difficulty, setDifficulty] = useState('expert'); 
   const [showDebug, setShowDebug] = useState(false); 
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const aiController = useMemo(() => new AI(difficulty), [difficulty]);
   
   // Game States (The True Present)
-  const [playerBoard, setPlayerBoard] = useState(placeRandomly);
-  const [aiBoard, setAiBoard] = useState(placeRandomly);
+  const [playerBoard, setPlayerBoard] = useState(() => placeFleetRandomly());
+  const [aiBoard, setAiBoard] = useState(() => placeFleetRandomly());
   const [turn, setTurn] = useState('player'); 
   const [winner, setWinner] = useState(null);
   
@@ -973,7 +714,7 @@ export default function App() {
   const logIdCounter = useRef(1);
   const roundRef = useRef(0); 
   const logContainerRef = useRef(null);
-  const pendingAiWeapons = useRef([]); 
+  const pendingResolution = useRef(null); 
 
   const unplacedShips = SHIPS.filter(s => !playerBoard.activeShips[s.name]);
   const currentSetupShip = unplacedShips[0]; 
@@ -991,9 +732,76 @@ export default function App() {
     });
   }, []);
 
+  const formatBattleEvent = useCallback((event) => {
+    if (event.kind === 'attack') {
+      if (event.actorId === 'player') {
+        return event.hits > 0
+          ? `💥 You scored ${event.hits} hit(s) with ${event.ship}!`
+          : `💦 Your ${event.ship} missed.`;
+      }
+
+      return event.hits > 0
+        ? `⚠️ Enemy scored ${event.hits} hit(s) using ${event.ship}!`
+        : `Enemy ${event.ship} missed.`;
+    }
+
+    if (event.kind === 'sink') {
+      return event.actorId === 'player'
+        ? `💥 Enemy ${event.ship} destroyed!`
+        : `🚨 CRITICAL: Your ${event.ship} was destroyed!`;
+    }
+
+    if (event.winnerId === 'draw') {
+      return "MUTUAL DESTRUCTION: Both fleets are sunk. It's a draw!";
+    }
+
+    if (event.winnerId === 'player') {
+      return "MISSION ACCOMPLISHED: Enemy fleet destroyed! YOU WIN!";
+    }
+
+    return "CRITICAL FAILURE: Your fleet was sunk! YOU LOSE!";
+  }, []);
+
+  const getBattleEventType = useCallback((event) => {
+    if (event.kind === 'attack') {
+      if (event.hits > 0) {
+        return event.actorId === 'player' ? 'success' : 'danger';
+      }
+
+      return 'miss';
+    }
+
+    if (event.kind === 'sink') {
+      return event.actorId === 'player' ? 'success' : 'danger';
+    }
+
+    return event.winnerId === 'player' ? 'success' : 'danger';
+  }, []);
+
+  const addBattleEvents = useCallback((events) => {
+    if (!events.length) return;
+
+    setHistory(prev => {
+      const mappedEvents = events.map(event => ({
+        id: logIdCounter.current++,
+        text: formatBattleEvent(event),
+        type: getBattleEventType(event),
+        shooter: event.actorId ?? null,
+        targetId: event.targetId ?? null,
+        coords: event.coords ?? [],
+        round: event.round,
+        ...event,
+      }));
+
+      const newHistory = [...prev, ...mappedEvents];
+      setPlaybackIndex(newHistory.length - 1);
+      return newHistory;
+    });
+  }, [formatBattleEvent, getBattleEventType]);
+
   const resetGame = () => {
-    setPlayerBoard(placeRandomly());
-    setAiBoard(placeRandomly());
+    setPlayerBoard(placeFleetRandomly());
+    setAiBoard(placeFleetRandomly());
     setInitialPlayerBoard(null);
     setInitialAiBoard(null);
     setPhase('setup');
@@ -1008,7 +816,7 @@ export default function App() {
     
     logIdCounter.current = 1;
     roundRef.current = 0;
-    pendingAiWeapons.current = [];
+    pendingResolution.current = null;
     const initLog = [{ id: 0, text: "Welcome to Command. Deploy your fleet on the Defend grid.", type: "info", shooter: null, coords: [], round: 0 }];
     setHistory(initLog);
     setPlaybackIndex(0);
@@ -1058,44 +866,6 @@ export default function App() {
     }
   }, [currentRound, isFeedExpanded]);
 
-  const handleFire = (targetBoard, startX, startY, pattern) => {
-    const board = cloneBoard(targetBoard);
-    let hitsThisTurn = 0;
-    const impactCells = [];
-    const sunkShips = [];
-
-    pattern.forEach(([dx, dy]) => {
-      const x = startX + dx;
-      const y = startY + dy;
-      const coord = `${x},${y}`;
-
-      if (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE) {
-        impactCells.push(coord);
-        if (!board.shotsFired.has(coord)) {
-          board.shotsFired.add(coord);
-
-          if (board.grid[x][y] === 1) {
-            hitsThisTurn++;
-            board.hitsReceived.add(coord);
-
-            Object.keys(board.activeShips).forEach(shipName => {
-              board.activeShips[shipName] = board.activeShips[shipName].filter(c => c !== coord);
-              if (board.activeShips[shipName].length === 0) {
-                delete board.activeShips[shipName];
-                board.shipLayouts[shipName].forEach(c => board.sunkCells.add(c));
-                sunkShips.push(shipName);
-              }
-            });
-          } else {
-            board.misses.add(coord);
-          }
-        }
-      }
-    });
-
-    return { newBoard: board, hits: hitsThisTurn, impactCells, sunkShips };
-  };
-
   // ----------------------------------------------------
   // EVENT HANDLERS
   // ----------------------------------------------------
@@ -1107,38 +877,14 @@ export default function App() {
     const isShip = playerBoard.grid[x][y] === 1 && !isHit;
 
     if (isShip) {
-      const shipName = Object.keys(playerBoard.activeShips).find(name => playerBoard.activeShips[name].includes(coord));
-      if (shipName) {
-        const newBoard = cloneBoard(playerBoard);
-        newBoard.activeShips[shipName].forEach(c => {
-          const [cx, cy] = c.split(',').map(Number);
-          newBoard.grid[cx][cy] = 0;
-        });
-        delete newBoard.activeShips[shipName];
-        delete newBoard.shipLayouts[shipName];
+      const newBoard = cloneBoard(playerBoard);
+      if (newBoard.removeShipAt(x, y)) {
         setPlayerBoard(newBoard);
         setHoverCell(null);
       }
     } else if (currentSetupShip) {
-      let valid = true;
-      const coords = [];
-      for (let i = 0; i < currentSetupShip.size; i++) {
-        const nx = setupOrientation === 'horizontal' ? x + i : x;
-        const ny = setupOrientation === 'horizontal' ? y : y + i;
-        if (nx >= BOARD_SIZE || ny >= BOARD_SIZE || playerBoard.grid[nx][ny] === 1) {
-          valid = false;
-          break;
-        }
-        coords.push(`${nx},${ny}`);
-      }
-      if (valid) {
-        const newBoard = cloneBoard(playerBoard);
-        coords.forEach(c => {
-          const [cx, cy] = c.split(',').map(Number);
-          newBoard.grid[cx][cy] = 1;
-        });
-        newBoard.activeShips[currentSetupShip.name] = coords;
-        newBoard.shipLayouts[currentSetupShip.name] = coords;
+      const newBoard = cloneBoard(playerBoard);
+      if (newBoard.placeShip(currentSetupShip.name, x, y, setupOrientation)) {
         setPlayerBoard(newBoard);
         setHoverCell(null);
       }
@@ -1148,7 +894,7 @@ export default function App() {
   const handleEnemyBoardClick = (x, y) => {
     if (phase === 'setup' || isScrubbing || turn !== 'player') return;
 
-    const isTargetable = canTargetCell(aiBoard, x, y, selectedWeapon);
+    const isTargetable = aiBoard.canTargetCell(x, y, selectedWeapon);
 
     if (targetCell && targetCell[0] === x && targetCell[1] === y) {
       executeFire();
@@ -1162,26 +908,24 @@ export default function App() {
     
     const [x, y] = targetCell;
     roundRef.current += 1; 
-
-    // Store AI weapons available at this exact moment for simultaneous counter-fire
-    pendingAiWeapons.current = Object.keys(aiBoard.activeShips);
-
-    const pattern = SHOT_PATTERNS[selectedWeapon];
-    const { newBoard, hits, impactCells, sunkShips } = handleFire(aiBoard, x, y, pattern);
-    
-    setAiBoard(newBoard);
-    setTargetCell(null);
-
-    if (hits > 0) addHistory(`💥 You scored ${hits} hit(s) with ${selectedWeapon}!`, "success", "player", impactCells);
-    else addHistory(`💦 Your ${selectedWeapon} missed.`, "miss", "player", impactCells);
-
-    sunkShips.forEach(ship => {
-      addHistory(`💥 Enemy ${ship} destroyed!`, "success", "player", impactCells);
+    const resolution = resolveSimultaneousTurn({
+      round: roundRef.current,
+      boardA: playerBoard,
+      moveA: { x, y, ship: selectedWeapon },
+      boardB: aiBoard,
+      moveB: aiController.selectMove(playerBoard, Object.keys(aiBoard.activeShips)),
+      sideAId: 'player',
+      sideBId: 'ai',
     });
+
+    pendingResolution.current = resolution;
+    setAiBoard(resolution.boardB);
+    setTargetCell(null);
+    addBattleEvents(resolution.eventsA);
     
     if (soundEnabled) {
-      if (sunkShips.length > 0) playSynth('sink');
-      else if (hits > 0) playSynth('hit');
+      if (resolution.attackA.sunkShips.length > 0) playSynth('sink');
+      else if (resolution.attackA.hits > 0) playSynth('hit');
       else playSynth('miss');
     }
 
@@ -1192,105 +936,48 @@ export default function App() {
   // AI TURN
   // ----------------------------------------------------
   useEffect(() => {
-    if (turn === 'ai' && !winner && phase === 'battle' && !isScrubbing) {
+    if (turn === 'ai' && !winner && phase === 'battle' && !isScrubbing && pendingResolution.current) {
       const timer = setTimeout(() => {
-        
-        // AI selects weapon based on what it had BEFORE the player's shot landed
-        const aiWeapons = pendingAiWeapons.current.length > 0 ? pendingAiWeapons.current : Object.keys(aiBoard.activeShips);
-        const largestWeapon = ["Carrier", "Battleship", "Submarine", "Destroyer", "PatrolBoat"].find(w => aiWeapons.includes(w)) || aiWeapons[0];
-        
-        let selectedMove = { x: 0, y: 0, weapon: largestWeapon };
-        
-        // Novice gets completely random moves. Medium and Expert use the Heatmap.
-        if (difficulty === 'novice') {
-            const validMoves = [];
-            for (let x = 0; x < BOARD_SIZE; x++) {
-              for (let y = 0; y < BOARD_SIZE; y++) {
-                if (canTargetCell(playerBoard, x, y, largestWeapon)) validMoves.push({x, y});
-              }
-            }
-            if (validMoves.length > 0) {
-                const move = validMoves[Math.floor(Math.random() * validMoves.length)];
-                selectedMove = { ...move, weapon: largestWeapon };
-            }
-        } else {
-            const activePlayerShipNames = Object.keys(playerBoard.activeShips);
-            const weaponsToTest = difficulty === 'expert' ? aiWeapons : [largestWeapon];
-            
-            let globalBestScore = -1;
-            let globalBestMoves = [];
+        const resolution = pendingResolution.current;
+        if (!resolution) return;
 
-            for (const weapon of weaponsToTest) {
-               const { maxVal, bestMoves } = getTargetingScores(playerBoard, activePlayerShipNames, weapon, difficulty);
-               
-               if (maxVal > globalBestScore) {
-                 globalBestScore = maxVal;
-                 globalBestMoves = bestMoves;
-               } else if (maxVal === globalBestScore) {
-                 globalBestMoves.push(...bestMoves);
-               }
-            }
+        setPlayerBoard(resolution.boardA);
+        addBattleEvents(resolution.eventsB);
 
-            if (globalBestMoves.length > 0) {
-               selectedMove = globalBestMoves[Math.floor(Math.random() * globalBestMoves.length)];
-            } else {
-               const x = Math.floor(Math.random() * BOARD_SIZE);
-               const y = Math.floor(Math.random() * BOARD_SIZE);
-               selectedMove = { x, y, weapon: largestWeapon };
-            }
+        if (resolution.attackB.hits > 0 && activeTab === 'attack') {
+          setUnseenHits(prev => prev + resolution.attackB.hits);
         }
 
-        const pattern = SHOT_PATTERNS[selectedMove.weapon];
-        const { newBoard: newPlayerBoard, hits, impactCells, sunkShips } = handleFire(playerBoard, selectedMove.x, selectedMove.y, pattern);
-        
-        setPlayerBoard(newPlayerBoard);
-
-        if (hits > 0) {
-          addHistory(`⚠️ Enemy scored ${hits} hit(s) using ${selectedMove.weapon}!`, "danger", "ai", impactCells);
-          if (activeTab === 'attack') setUnseenHits(prev => prev + hits);
-        } else {
-          addHistory(`Enemy ${selectedMove.weapon} missed.`, "miss", "ai", impactCells);
-        }
-
-        sunkShips.forEach(ship => {
-          addHistory(`🚨 CRITICAL: Your ${ship} was destroyed!`, "danger", "ai", impactCells);
-        });
-
-        // ==========================================
-        // SIMULTANEOUS GAME OVER EVALUATION
-        // ==========================================
-        const playerDead = Object.keys(newPlayerBoard.activeShips).length === 0;
-        const aiDead = Object.keys(aiBoard.activeShips).length === 0;
-
-        if (playerDead && aiDead) {
-          if (soundEnabled) playSynth('draw'); // Changed from lose to draw
+        if (resolution.winnerId === 'draw') {
+          if (soundEnabled) playSynth('draw');
           setWinner('Draw');
           setTurn('gameover');
-          addHistory("MUTUAL DESTRUCTION: Both fleets are sunk. It's a draw!", "danger", null, []);
-        } else if (playerDead) {
+          addBattleEvents([resolution.outcomeEvent].filter(Boolean));
+        } else if (resolution.winnerId === 'ai') {
           if (soundEnabled) playSynth('lose');
           setWinner('AI');
           setTurn('gameover');
-          addHistory("CRITICAL FAILURE: Your fleet was sunk! YOU LOSE!", "danger", null, []);
-        } else if (aiDead) {
+          addBattleEvents([resolution.outcomeEvent].filter(Boolean));
+        } else if (resolution.winnerId === 'player') {
           if (soundEnabled) playSynth('win');
           setWinner('Player');
           setTurn('gameover');
-          addHistory("MISSION ACCOMPLISHED: Enemy fleet destroyed! YOU WIN!", "success", null, []);
+          addBattleEvents([resolution.outcomeEvent].filter(Boolean));
         } else {
           if (soundEnabled) {
-            if (sunkShips.length > 0) playSynth('sink');
-            else if (hits > 0) playSynth('hit');
+            if (resolution.attackB.sunkShips.length > 0) playSynth('sink');
+            else if (resolution.attackB.hits > 0) playSynth('hit');
             else playSynth('miss');
           }
           setTurn('player');
         }
 
+        pendingResolution.current = null;
       }, 1200);
 
       return () => clearTimeout(timer);
     }
-  }, [turn, winner, aiBoard.activeShips, playerBoard, addHistory, activeTab, difficulty, phase, isScrubbing, soundEnabled]);
+  }, [turn, winner, addBattleEvents, activeTab, phase, isScrubbing, soundEnabled]);
 
   // ----------------------------------------------------
   // EVENT SOURCING: TIME MACHINE REPLAY LOGIC
@@ -1318,48 +1005,14 @@ export default function App() {
     setPlaybackIndex(targetIndex);
   };
 
-  const replayBoard = (initialBoard, fullHistory, targetIndex, isEnemyBoard) => {
-    if (!initialBoard) return null;
-    const board = cloneBoard(initialBoard);
-
-    for (let i = 0; i <= targetIndex; i++) {
-      const action = fullHistory[i];
-      if (!action || !action.coords || action.coords.length === 0) continue;
-      
-      const shouldApply = isEnemyBoard ? action.shooter === 'player' : action.shooter === 'ai';
-      
-      if (shouldApply) {
-        action.coords.forEach(coord => {
-          const [x, y] = coord.split(',').map(Number);
-          if (!board.shotsFired.has(coord)) {
-            board.shotsFired.add(coord);
-            if (board.grid[x][y] === 1) {
-              board.hitsReceived.add(coord);
-              Object.keys(board.activeShips).forEach(shipName => {
-                board.activeShips[shipName] = board.activeShips[shipName].filter(c => c !== coord);
-                if (board.activeShips[shipName].length === 0) {
-                  delete board.activeShips[shipName];
-                  board.shipLayouts[shipName].forEach(c => board.sunkCells.add(c));
-                }
-              });
-            } else {
-              board.misses.add(coord);
-            }
-          }
-        });
-      }
-    }
-    return board;
-  };
-
   const displayPlayerBoard = useMemo(() => {
     if (phase === 'setup' || !isScrubbing) return playerBoard;
-    return replayBoard(initialPlayerBoard, history, playbackIndex, false);
+    return rebuildBoardState(initialPlayerBoard, history, playbackIndex, 'player');
   }, [phase, isScrubbing, playbackIndex, history, playerBoard, initialPlayerBoard]);
 
   const displayAiBoard = useMemo(() => {
     if (phase === 'setup' || !isScrubbing) return aiBoard;
-    return replayBoard(initialAiBoard, history, playbackIndex, true);
+    return rebuildBoardState(initialAiBoard, history, playbackIndex, 'ai');
   }, [phase, isScrubbing, playbackIndex, history, aiBoard, initialAiBoard]);
 
   const logsByRound = useMemo(() => {
@@ -1395,15 +1048,13 @@ export default function App() {
   // ----------------------------------------------------
   const playerBoardHeatmap = useMemo(() => {
     if (!showDebug || phase === 'setup') return null;
-    const unsunkHits = new Set([...displayPlayerBoard.hitsReceived].filter(c => !displayPlayerBoard.sunkCells.has(c)));
-    return getHeatmap(displayPlayerBoard, Object.keys(displayPlayerBoard.activeShips), unsunkHits, difficulty);
-  }, [displayPlayerBoard, showDebug, phase, difficulty]);
+    return aiController.getHeatmap(displayPlayerBoard, Object.keys(displayPlayerBoard.activeShips));
+  }, [aiController, displayPlayerBoard, showDebug, phase]);
 
   const enemyBoardHeatmap = useMemo(() => {
     if (!showDebug || phase === 'setup') return null;
-    const unsunkHits = new Set([...displayAiBoard.hitsReceived].filter(c => !displayAiBoard.sunkCells.has(c)));
-    return getHeatmap(displayAiBoard, Object.keys(displayAiBoard.activeShips), unsunkHits, difficulty);
-  }, [displayAiBoard, showDebug, phase, difficulty]);
+    return aiController.getHeatmap(displayAiBoard, Object.keys(displayAiBoard.activeShips));
+  }, [aiController, displayAiBoard, showDebug, phase]);
 
   // ----------------------------------------------------
   // DERIVED STATE

@@ -15,3 +15,7 @@ dist/
 .DS_Store
 dist-ssr
 *.local
+.goalie/
+goalie_task_*.md
+goalie_verify_*.md
+goalie_goal_*.md
