@@ -1,5 +1,5 @@
 import { AI, ALL_AI_VARIANTS, type AIVariants } from './src/ai';
-import { resolveSimultaneousTurn } from './src/engine';
+import { BattleshipMatch } from './src/engine';
 
 const VALID_VARIANTS = ALL_AI_VARIANTS;
 
@@ -30,41 +30,22 @@ const isVariant = (value: string): value is AIVariants => (VALID_VARIANTS as rea
 const runMatch = (sideAVariant: AIVariants, sideBVariant: AIVariants, verbose: boolean) => {
   const sideA = new AI(sideAVariant);
   const sideB = new AI(sideBVariant);
-  let boardA = sideA.placeFleet();
-  let boardB = sideB.placeFleet();
-  let rounds = 0;
+  const match = new BattleshipMatch(sideA.placeFleet(), sideB.placeFleet(), 'sideA', 'sideB');
 
-  while (!boardA.isGameOver() && !boardB.isGameOver()) {
-    rounds += 1;
-
-    const moveA = sideA.selectMove(boardB, boardA.getActiveShipNames());
-    const moveB = sideB.selectMove(boardA, boardB.getActiveShipNames());
-    const result = resolveSimultaneousTurn({
-      round: rounds,
-      boardA,
-      moveA,
-      boardB,
-      moveB,
-      sideAId: 'sideA',
-      sideBId: 'sideB',
-    });
-
-    boardA = result.boardA;
-    boardB = result.boardB;
+  while (!match.isGameOver) {
+    const moveA = sideA.selectMove(match.boardB, match.boardA.getActiveShipNames());
+    const moveB = sideB.selectMove(match.boardA, match.boardB.getActiveShipNames());
+    const result = match.resolveTurn(moveA, moveB);
 
     if (verbose) {
       console.log(
-        `Round ${rounds}: sideA ${moveA.ship} @ (${moveA.x},${moveA.y}) => ${result.attackA.hits} hits | ` +
+        `Round ${match.round}: sideA ${moveA.ship} @ (${moveA.x},${moveA.y}) => ${result.attackA.hits} hits | ` +
           `sideB ${moveB.ship} @ (${moveB.x},${moveB.y}) => ${result.attackB.hits} hits`,
       );
     }
-
-    if (result.winnerId) {
-      return { winnerId: result.winnerId, rounds };
-    }
   }
 
-  return { winnerId: 'draw', rounds };
+  return { winnerId: match.winner ?? 'draw', rounds: match.round };
 };
 
 const main = () => {

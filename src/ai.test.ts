@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AI, placeFleetRandomly } from './ai';
-import { Board, SHIPS, resolveSimultaneousTurn } from './engine';
+import { Board, SHIPS, BattleshipMatch } from './engine';
 
 describe('ai', () => {
   it('places a full fleet without overlaps', () => {
@@ -124,20 +124,15 @@ describe('ai', () => {
   it('completes a full game between expert and medium without errors', () => {
     const aiA = new AI('expert');
     const aiB = new AI('medium');
-    let boardA = aiA.placeFleet();
-    let boardB = aiB.placeFleet();
-    let rounds = 0;
+    const match = new BattleshipMatch(aiA.placeFleet(), aiB.placeFleet(), 'sideA', 'sideB');
 
-    while (!boardA.isGameOver() && !boardB.isGameOver()) {
-      rounds += 1;
-      expect(rounds).toBeLessThan(500);
-      const moveA = aiA.selectMove(boardB, boardA.getActiveShipNames());
-      const moveB = aiB.selectMove(boardA, boardB.getActiveShipNames());
-      const result = resolveSimultaneousTurn({ round: rounds, boardA, moveA, boardB, moveB });
-      boardA = result.boardA;
-      boardB = result.boardB;
+    while (!match.isGameOver) {
+      expect(match.round).toBeLessThan(500);
+      const moveA = aiA.selectMove(match.boardB, match.boardA.getActiveShipNames());
+      const moveB = aiB.selectMove(match.boardA, match.boardB.getActiveShipNames());
+      match.resolveTurn(moveA, moveB);
     }
 
-    expect(boardA.isGameOver() || boardB.isGameOver()).toBe(true);
+    expect(match.isGameOver).toBe(true);
   });
 });

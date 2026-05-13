@@ -1,7 +1,7 @@
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { AI, ALL_AI_VARIANTS, type AIVariants, placeFleetRandomly } from './src/ai';
-import { BOARD_SIZE, Board, SHIP_INDEX, SHIP_NAMES, SHOT_PATTERNS, resolveSimultaneousTurn } from './src/engine';
+import { BOARD_SIZE, Board, SHIP_INDEX, SHIP_NAMES, SHOT_PATTERNS, BattleshipMatch } from './src/engine';
 
 const VALID_VARIANTS = ALL_AI_VARIANTS;
 const COLUMN_LABELS = Array.from({ length: BOARD_SIZE }, (_, index) => String.fromCharCode(65 + index));
@@ -203,9 +203,7 @@ const main = async () => {
 
   const rl = createInterface({ input, output });
   const aiController = new AI(ai);
-  let playerBoard = placeFleetRandomly();
-  let aiBoard = aiController.placeFleet();
-  let round = 0;
+  const match = new BattleshipMatch(placeFleetRandomly(), aiController.placeFleet(), 'player', 'ai');
 
   try {
     console.log('Welcome to Tactical Battleship!');
@@ -213,14 +211,14 @@ const main = async () => {
     await rl.question('\nPress Enter to begin...');
 
     while (true) {
-      const playerDead = playerBoard.isGameOver();
-      const aiDead = aiBoard.isGameOver();
+      const playerDead = match.boardA.isGameOver();
+      const aiDead = match.boardB.isGameOver();
 
       if (playerDead || aiDead) {
         clearScreen();
-        console.log(renderBoard('Enemy Waters', aiBoard, true));
+        console.log(renderBoard('Enemy Waters', match.boardB, true));
         console.log();
-        console.log(renderBoard('Your Fleet', playerBoard, true));
+        console.log(renderBoard('Your Fleet', match.boardA, true));
 
         if (playerDead && aiDead) console.log("\n!!! MUTUAL DESTRUCTION !!!\nBoth fleets have been destroyed. It's a draw!");
         else if (aiDead) console.log('\n!!! VICTORY !!!\nYou have sunk the entire enemy fleet.');
@@ -230,31 +228,19 @@ const main = async () => {
 
       const playerMove = await getPlayerMove(
         rl,
-        playerBoard,
-        aiBoard,
-        playerBoard.getActiveShipNames(),
+        match.boardA,
+        match.boardB,
+        match.boardA.getActiveShipNames(),
         aiController,
       );
-      const aiMove = aiController.selectMove(playerBoard, aiBoard.getActiveShipNames());
-      round += 1;
+      const aiMove = aiController.selectMove(match.boardA, match.boardB.getActiveShipNames());
 
-      const result = resolveSimultaneousTurn({
-        round,
-        boardA: playerBoard,
-        moveA: playerMove,
-        boardB: aiBoard,
-        moveB: aiMove,
-        sideAId: 'player',
-        sideBId: 'ai',
-      });
-
-      playerBoard = result.boardA;
-      aiBoard = result.boardB;
+      const result = match.resolveTurn(playerMove, aiMove);
 
       clearScreen();
-      console.log(renderBoard('Enemy Waters', aiBoard, false));
+      console.log(renderBoard('Enemy Waters', match.boardB, false));
       console.log();
-      console.log(renderBoard('Your Fleet', playerBoard, true));
+      console.log(renderBoard('Your Fleet', match.boardA, true));
       console.log(`\nYOU FIRED: ${playerMove.ship} at ${formatCoord(playerMove.x, playerMove.y)}.`);
       console.log(result.attackA.hits > 0 ? `BOOM! ${result.attackA.hits} hit(s) recorded!` : 'Splash... You missed.');
       result.attackA.sunkShips.forEach((ship) => console.log(`Enemy ${ship} destroyed!`));

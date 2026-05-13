@@ -62,6 +62,7 @@ export interface TurnResolution {
   eventsB: BattleLogEvent[];
   outcomeEvent: BattleLogEvent | null;
   winnerId: string | 'draw' | null;
+  round: number;
 }
 
 export const SHIP_TYPES: ShipDefinition[] = [
@@ -353,18 +354,35 @@ export class BattleshipMatch {
 
   boardB: Board;
 
+  readonly initialBoardA: Board;
+
+  readonly initialBoardB: Board;
+
   sideAId: string;
 
   sideBId: string;
 
+  round: number = 0;
+
+  winner: string | 'draw' | null = null;
+
+  events: BattleLogEvent[] = [];
+
   constructor(boardA: Board, boardB: Board, sideAId: string = 'sideA', sideBId: string = 'sideB') {
+    this.initialBoardA = boardA.clone();
+    this.initialBoardB = boardB.clone();
     this.boardA = boardA.clone();
     this.boardB = boardB.clone();
     this.sideAId = sideAId;
     this.sideBId = sideBId;
   }
 
-  resolveTurn(round: number, moveA: Move, moveB: Move): TurnResolution {
+  get isGameOver(): boolean {
+    return this.winner !== null;
+  }
+
+  resolveTurn(moveA: Move, moveB: Move): TurnResolution {
+    this.round += 1;
     const patternA = moveA.pattern ?? SHOT_PATTERNS[moveA.ship] ?? [];
     const patternB = moveB.pattern ?? SHOT_PATTERNS[moveB.ship] ?? [];
 
@@ -378,17 +396,32 @@ export class BattleshipMatch {
     if (sideADefeated && sideBDefeated) winnerId = 'draw';
     else if (sideBDefeated) winnerId = this.sideAId;
     else if (sideADefeated) winnerId = this.sideBId;
+    if (winnerId) this.winner = winnerId;
+
+    const eventsA = buildAttackEvents(this.round, this.sideAId, this.sideBId, attackA, this.boardB);
+    const eventsB = buildAttackEvents(this.round, this.sideBId, this.sideAId, attackB, this.boardA);
+    const outcomeEvent = buildOutcomeEvent(this.round, winnerId);
+    this.events.push(...eventsA, ...eventsB, ...(outcomeEvent ? [outcomeEvent] : []));
 
     return {
       boardA: this.boardA.clone(),
       boardB: this.boardB.clone(),
       attackA,
       attackB,
-      eventsA: buildAttackEvents(round, this.sideAId, this.sideBId, attackA, this.boardB),
-      eventsB: buildAttackEvents(round, this.sideBId, this.sideAId, attackB, this.boardA),
-      outcomeEvent: buildOutcomeEvent(round, winnerId),
+      eventsA,
+      eventsB,
+      outcomeEvent,
       winnerId,
+      round: this.round,
     };
+  }
+
+  boardAAt(eventIndex: number): Board {
+    return BattleshipMatch.rebuildBoardState(this.initialBoardA, this.events, eventIndex, this.sideAId);
+  }
+
+  boardBAt(eventIndex: number): Board {
+    return BattleshipMatch.rebuildBoardState(this.initialBoardB, this.events, eventIndex, this.sideBId);
   }
 
   static rebuildBoardState(
@@ -429,19 +462,4 @@ export const handleFire = (targetBoard: Board, startX: number, startY: number, p
   };
 };
 export const isBoardDefeated = (board: Board): boolean => board.isGameOver();
-export const resolveSimultaneousTurn = (params: {
-  round: number;
-  boardA: Board;
-  moveA: Move;
-  boardB: Board;
-  moveB: Move;
-  sideAId?: string;
-  sideBId?: string;
-}): TurnResolution =>
-  new BattleshipMatch(
-    params.boardA,
-    params.boardB,
-    params.sideAId ?? 'sideA',
-    params.sideBId ?? 'sideB',
-  ).resolveTurn(params.round, params.moveA, params.moveB);
 export const rebuildBoardState = BattleshipMatch.rebuildBoardState;

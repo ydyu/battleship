@@ -11,7 +11,6 @@ describe('engine', () => {
 
     const match = new BattleshipMatch(boardA, boardB, 'left', 'right');
     const result = match.resolveTurn(
-      1,
       { x: 5, y: 5, ship: 'Destroyer' },
       { x: 0, y: 0, ship: 'Destroyer' },
     );
@@ -46,7 +45,6 @@ describe('engine', () => {
     boardB.placeShip('Destroyer', 5, 5, 'vertical');
 
     const result = new BattleshipMatch(boardA, boardB, 'left', 'right').resolveTurn(
-      1,
       { x: 5, y: 5, ship: 'Destroyer' },
       { x: 0, y: 0, ship: 'Destroyer' },
     );

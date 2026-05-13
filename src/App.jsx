@@ -7,8 +7,7 @@ import {
   SHOT_PATTERNS,
   cloneBoard,
   createEmptyBoard,
-  rebuildBoardState,
-  resolveSimultaneousTurn,
+  BattleshipMatch,
 } from './engine';
 
 const buildMiniIcons = (shotPatterns) =>
@@ -36,9 +35,11 @@ const MINI_ICONS = buildMiniIcons(SHOT_PATTERNS);
 // 2. SFX SYNTHESIZER (Web Audio API)
 // ==========================================
 let audioCtx = null;
+let soundEffectsEnabled = true;
 
 const playSynth = (type) => {
   if (typeof window === 'undefined') return;
+  if (!soundEffectsEnabled) return;
   if (!audioCtx) {
     try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
     catch (e) { return; }
@@ -198,8 +199,10 @@ const GameHeader = ({ phase, difficulty, setDifficulty, showDebug, setShowDebug,
 
       <button 
         onClick={() => {
-          if (!soundEnabled) playSynth('start'); // Prime the pump if turning on
-          setSoundEnabled(s => !s);
+          const nextEnabled = !soundEnabled;
+          soundEffectsEnabled = nextEnabled;
+          if (nextEnabled) playSynth('start'); // Prime the pump when turning sound back on
+          setSoundEnabled(nextEnabled);
         }}
         className={`p-1.5 sm:p-2 border rounded-lg transition-colors flex-shrink-0
           ${soundEnabled ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-400' : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-500'}`}
@@ -600,7 +603,7 @@ const CombatFeed = ({
 
             {!isFeedExpanded && (
               <div className="font-mono text-xs sm:text-sm mt-1 line-clamp-1 flex items-center gap-2">
-                <span className="opacity-50">[{String(displayLog?.id || 0).padStart(3, '0')}]</span> {">"} {displayLog?.text}
+                <span className="opacity-50">[{String(displayLog?.id || 0).padStart(3, '0')}]</span> {">"} {displayLog?.text || "Deploy your fleet on the Defend grid."}
               </div>
             )}
           </button>
@@ -701,13 +704,14 @@ export default function App() {
   const [playerBoard, setPlayerBoard] = useState(() => placeFleetRandomly());
   const [aiBoard, setAiBoard] = useState(() => placeFleetRandomly());
   const [turn, setTurn] = useState('player'); 
-  const [winner, setWinner] = useState(null);
-  
-  // Time Machine / History States
-  const [initialPlayerBoard, setInitialPlayerBoard] = useState(null);
-  const [initialAiBoard, setInitialAiBoard] = useState(null);
-  const [history, setHistory] = useState([{ id: 0, text: "Welcome to Command. Deploy your fleet on the Defend grid.", type: "info", shooter: null, coords: [], round: 0 }]);
-  const [playbackIndex, setPlaybackIndex] = useState(0);
+
+  // Match engine ref (stateful BattleshipMatch)
+  const matchRef = useRef(null);
+  const [tick, setTick] = useState(0);
+  const lastSeenEventIdxRef = useRef(-1);
+
+  // Playback / Time Machine
+  const [playbackIndex, setPlaybackIndex] = useState(-1);
 
   // Setup / UI States
   const [setupOrientation, setSetupOrientation] = useState('horizontal');
@@ -716,30 +720,17 @@ export default function App() {
   const [targetCell, setTargetCell] = useState(null);
   const [isFeedExpanded, setIsFeedExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState('defend'); 
-  const [unseenHits, setUnseenHits] = useState(0);
 
-  const logIdCounter = useRef(1);
-  const roundRef = useRef(0); 
   const logContainerRef = useRef(null);
-  const pendingResolution = useRef(null); 
+  const pendingResolution = useRef(null);
 
   const unplacedShips = SHIPS.filter(s => !playerBoard.activeShips[s.name]);
   const currentSetupShip = unplacedShips[0]; 
 
-  const isScrubbing = playbackIndex < history.length - 1;
-  const maxRound = history[history.length - 1]?.round || 0;
-  const currentRound = history[playbackIndex]?.round || 0;
+  // Fresh read of match events on each render (tick forces re-read after mutation)
+  const events = matchRef.current?.events ?? [];
 
-  // Append new moves to the END of history (Event Sourcing)
-  const addHistory = useCallback((text, type = "info", shooter = null, coords = []) => {
-    setHistory(prev => {
-      const newHistory = [...prev, { id: logIdCounter.current++, text, type, shooter, coords, round: roundRef.current }];
-      setPlaybackIndex(newHistory.length - 1); 
-      return newHistory;
-    });
-  }, []);
-
-  const formatBattleEvent = useCallback((event) => {
+  const formatBattleEvent = (event) => {
     if (event.kind === 'attack') {
       if (event.actorId === 'player') {
         return event.hits > 0
@@ -767,9 +758,9 @@ export default function App() {
     }
 
     return "CRITICAL FAILURE: Your fleet was sunk! YOU LOSE!";
-  }, []);
+  };
 
-  const getBattleEventType = useCallback((event) => {
+  const getBattleEventType = (event) => {
     if (event.kind === 'attack') {
       if (event.hits > 0) {
         return event.actorId === 'player' ? 'success' : 'danger';
@@ -783,59 +774,78 @@ export default function App() {
     }
 
     return event.winnerId === 'player' ? 'success' : 'danger';
-  }, []);
+  };
 
-  const addBattleEvents = useCallback((events) => {
-    if (!events.length) return;
+  const displayEvents = useMemo(() => events.map((event, idx) => ({
+    ...event,
+    text: formatBattleEvent(event),
+    type: getBattleEventType(event),
+    shooter: event.actorId ?? null,
+    id: idx,
+  })), [tick]);
 
-    setHistory(prev => {
-      const mappedEvents = events.map(event => ({
-        id: logIdCounter.current++,
-        text: formatBattleEvent(event),
-        type: getBattleEventType(event),
-        shooter: event.actorId ?? null,
-        targetId: event.targetId ?? null,
-        coords: event.coords ?? [],
-        round: event.round,
-        ...event,
-      }));
+  const maxRound = matchRef.current?.round ?? 0;
+  const currentRound = (playbackIndex >= 0 && playbackIndex < events.length)
+    ? (events[playbackIndex]?.round ?? 0)
+    : maxRound;
+  const isScrubbing = phase === 'battle' && events.length > 0
+    && playbackIndex >= 0 && playbackIndex < events.length - 1;
+  const displayLog = playbackIndex >= 0 ? displayEvents[playbackIndex] : null;
 
-      const newHistory = [...prev, ...mappedEvents];
-      setPlaybackIndex(newHistory.length - 1);
-      return newHistory;
+  const winner = matchRef.current?.winner 
+    ? (matchRef.current.winner === 'player' ? 'Player' 
+       : matchRef.current.winner === 'ai' ? 'AI' : 'Draw')
+    : null;
+
+  const unseenHits = useMemo(() => {
+    return events
+      .slice(lastSeenEventIdxRef.current + 1)
+      .filter(e => e.kind === 'attack' && e.targetId === 'player' && (e.hits ?? 0) > 0)
+      .length;
+  }, [tick]);
+
+  const logsByRound = useMemo(() => {
+    const groups = {};
+    displayEvents.forEach((ev, idx) => {
+      const r = ev.round;
+      if (!groups[r]) groups[r] = [];
+      groups[r].push({ ...ev, id: idx });
     });
-  }, [formatBattleEvent, getBattleEventType]);
+    return groups;
+  }, [tick]);
+
+  const roundKeys = useMemo(() => Object.keys(logsByRound).map(Number).sort((a, b) => b - a), [logsByRound]);
+
+  useEffect(() => {
+    soundEffectsEnabled = soundEnabled;
+  }, [soundEnabled]);
 
   const resetGame = () => {
     setPlayerBoard(placeFleetRandomly());
     setAiBoard(placeFleetRandomly());
-    setInitialPlayerBoard(null);
-    setInitialAiBoard(null);
+    matchRef.current = null;
+    lastSeenEventIdxRef.current = -1;
     setPhase('setup');
     setTurn('player');
     setSelectedWeapon('Carrier');
     setSetupOrientation('horizontal');
-    setWinner(null);
     setTargetCell(null);
     setIsFeedExpanded(false);
-    setUnseenHits(0);
     setActiveTab('defend');
-    
-    logIdCounter.current = 1;
-    roundRef.current = 0;
+    setPlaybackIndex(-1);
+    setTick(0);
     pendingResolution.current = null;
-    const initLog = [{ id: 0, text: "Welcome to Command. Deploy your fleet on the Defend grid.", type: "info", shooter: null, coords: [], round: 0 }];
-    setHistory(initLog);
-    setPlaybackIndex(0);
   };
 
   const startBattle = () => {
-    if (soundEnabled) playSynth('start');
+    playSynth('start');
+    const match = new BattleshipMatch(playerBoard, aiBoard, 'player', 'ai');
+    matchRef.current = match;
+    lastSeenEventIdxRef.current = -1;
+    setPlaybackIndex(-1);
     setPhase('battle');
     setActiveTab('attack');
-    setInitialPlayerBoard(cloneBoard(playerBoard));
-    setInitialAiBoard(cloneBoard(aiBoard));
-    addHistory("Fleet deployed. Engaging enemy forces!", "info");
+    setTick(t => t + 1);
   };
 
   useEffect(() => {
@@ -849,7 +859,10 @@ export default function App() {
   }, [playerBoard.activeShips, selectedWeapon, phase, isScrubbing]);
 
   useEffect(() => {
-    if (activeTab === 'defend' && !isScrubbing) setUnseenHits(0);
+    if (activeTab === 'defend' && !isScrubbing) {
+      lastSeenEventIdxRef.current = events.length - 1;
+      setTick(t => t + 1);
+    }
   }, [activeTab, isScrubbing]);
 
   // Sync expanded log scroll position to Time Machine Slider using internal container scrollTo
@@ -930,30 +943,20 @@ export default function App() {
 
   const executeFire = () => {
     if (!targetCell || turn !== 'player' || phase !== 'battle' || isScrubbing) return;
-    
+
     const [x, y] = targetCell;
-    roundRef.current += 1; 
-    const resolution = resolveSimultaneousTurn({
-      round: roundRef.current,
-      boardA: playerBoard,
-      moveA: { x, y, ship: selectedWeapon },
-      boardB: aiBoard,
-      moveB: aiController.selectMove(playerBoard, Object.keys(aiBoard.activeShips)),
-      sideAId: 'player',
-      sideBId: 'ai',
-    });
-
+    const aiMove = aiController.selectMove(matchRef.current.boardA, matchRef.current.boardB.getActiveShipNames());
+    const resolution = matchRef.current.resolveTurn({ x, y, ship: selectedWeapon }, aiMove);
     pendingResolution.current = resolution;
-    setAiBoard(resolution.boardB);
+    setPlayerBoard(matchRef.current.boardA.clone());
+    setAiBoard(matchRef.current.boardB.clone());
+    setPlaybackIndex(matchRef.current.events.length - 1);
     setTargetCell(null);
-    addBattleEvents(resolution.eventsA);
-    
-    if (soundEnabled) {
-      if (resolution.attackA.sunkShips.length > 0) playSynth('sink');
-      else if (resolution.attackA.hits > 0) playSynth('hit');
-      else playSynth('miss');
-    }
+    setTick(t => t + 1);
 
+    if (resolution.attackA.sunkShips.length > 0) playSynth('sink');
+    else if (resolution.attackA.hits > 0) playSynth('hit');
+    else playSynth('miss');
     setTurn('ai');
   };
 
@@ -961,39 +964,20 @@ export default function App() {
   // AI TURN
   // ----------------------------------------------------
   useEffect(() => {
-    if (turn === 'ai' && !winner && phase === 'battle' && !isScrubbing && pendingResolution.current) {
+    if (turn === 'ai' && phase === 'battle' && !isScrubbing && pendingResolution.current) {
       const timer = setTimeout(() => {
         const resolution = pendingResolution.current;
         if (!resolution) return;
 
-        setPlayerBoard(resolution.boardA);
-        addBattleEvents(resolution.eventsB);
-
-        if (resolution.attackB.hits > 0 && activeTab === 'attack') {
-          setUnseenHits(prev => prev + resolution.attackB.hits);
-        }
-
-        if (resolution.winnerId === 'draw') {
-          if (soundEnabled) playSynth('draw');
-          setWinner('Draw');
+        if (resolution.winnerId) {
+          if (resolution.winnerId === 'draw') playSynth('draw');
+          else if (resolution.winnerId === 'ai') playSynth('lose');
+          else playSynth('win');
           setTurn('gameover');
-          addBattleEvents([resolution.outcomeEvent].filter(Boolean));
-        } else if (resolution.winnerId === 'ai') {
-          if (soundEnabled) playSynth('lose');
-          setWinner('AI');
-          setTurn('gameover');
-          addBattleEvents([resolution.outcomeEvent].filter(Boolean));
-        } else if (resolution.winnerId === 'player') {
-          if (soundEnabled) playSynth('win');
-          setWinner('Player');
-          setTurn('gameover');
-          addBattleEvents([resolution.outcomeEvent].filter(Boolean));
         } else {
-          if (soundEnabled) {
-            if (resolution.attackB.sunkShips.length > 0) playSynth('sink');
-            else if (resolution.attackB.hits > 0) playSynth('hit');
-            else playSynth('miss');
-          }
+          if (resolution.attackB.sunkShips.length > 0) playSynth('sink');
+          else if (resolution.attackB.hits > 0) playSynth('hit');
+          else playSynth('miss');
           setTurn('player');
         }
 
@@ -1002,71 +986,54 @@ export default function App() {
 
       return () => clearTimeout(timer);
     }
-  }, [turn, winner, addBattleEvents, activeTab, phase, isScrubbing, soundEnabled]);
+  }, [turn, phase, isScrubbing, soundEnabled, activeTab]);
 
   // ----------------------------------------------------
   // EVENT SOURCING: TIME MACHINE REPLAY LOGIC
   // ----------------------------------------------------
   const handleSliderChange = (e) => {
     const targetRound = Number(e.target.value);
-    let targetIndex = 0;
-    for (let i = history.length - 1; i >= 0; i--) {
-      if (history[i].round === targetRound) {
-        targetIndex = history[i].id;
-        break;
-      }
+    let targetIndex = events.length - 1;
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].round === targetRound) { targetIndex = i; break; }
     }
     setPlaybackIndex(targetIndex);
   };
 
   const handleRoundTap = (targetRound) => {
-    let targetIndex = 0;
-    for (let i = history.length - 1; i >= 0; i--) {
-      if (history[i].round === targetRound) {
-        targetIndex = history[i].id;
-        break;
-      }
+    let targetIndex = events.length - 1;
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].round === targetRound) { targetIndex = i; break; }
     }
     setPlaybackIndex(targetIndex);
   };
 
   const displayPlayerBoard = useMemo(() => {
-    if (phase === 'setup' || !isScrubbing) return playerBoard;
-    return rebuildBoardState(initialPlayerBoard, history, playbackIndex, 'player');
-  }, [phase, isScrubbing, playbackIndex, history, playerBoard, initialPlayerBoard]);
+    if (phase === 'setup' || !isScrubbing || !matchRef.current) return playerBoard;
+    return matchRef.current.boardAAt(playbackIndex);
+  }, [phase, isScrubbing, playbackIndex, tick, playerBoard]);
 
   const displayAiBoard = useMemo(() => {
-    if (phase === 'setup' || !isScrubbing) return aiBoard;
-    return rebuildBoardState(initialAiBoard, history, playbackIndex, 'ai');
-  }, [phase, isScrubbing, playbackIndex, history, aiBoard, initialAiBoard]);
-
-  const logsByRound = useMemo(() => {
-    const groups = {};
-    history.forEach(log => {
-      if (!groups[log.round]) groups[log.round] = [];
-      groups[log.round].push(log);
-    });
-    return groups;
-  }, [history]);
-  
-  const roundKeys = useMemo(() => Object.keys(logsByRound).map(Number).sort((a, b) => b - a), [logsByRound]);
+    if (phase === 'setup' || !isScrubbing || !matchRef.current) return aiBoard;
+    return matchRef.current.boardBAt(playbackIndex);
+  }, [phase, isScrubbing, playbackIndex, tick, aiBoard]);
 
   const activeLogsInView = useMemo(() => {
     if (!isScrubbing) {
-       const latestRound = history[history.length - 1]?.round || 0;
-       if (latestRound === 0) return [];
-       return history.filter(log => log.round === latestRound);
+      const latestRound = maxRound;
+      if (latestRound === 0) return [];
+      return displayEvents.filter(ev => ev.round === latestRound);
     }
-    return history.filter(log => log.round === currentRound && log.id <= playbackIndex);
-  }, [isScrubbing, history, currentRound, playbackIndex]);
+    return displayEvents.slice(0, playbackIndex + 1).filter(ev => ev.round === currentRound);
+  }, [isScrubbing, displayEvents, currentRound, playbackIndex, maxRound]);
 
-  const playerHighlightCoords = useMemo(() => {
-    return activeLogsInView.filter(l => l.shooter === 'player').flatMap(l => l.coords);
-  }, [activeLogsInView]);
+  const playerHighlightCoords = useMemo(() =>
+    activeLogsInView.filter(l => l.shooter === 'player').flatMap(l => l.coords ?? []),
+    [activeLogsInView]);
 
-  const aiHighlightCoords = useMemo(() => {
-    return activeLogsInView.filter(l => l.shooter === 'ai').flatMap(l => l.coords);
-  }, [activeLogsInView]);
+  const aiHighlightCoords = useMemo(() =>
+    activeLogsInView.filter(l => l.shooter === 'ai').flatMap(l => l.coords ?? []),
+    [activeLogsInView]);
 
   // ----------------------------------------------------
   // DEBUG HEATMAP CALCULATIONS
@@ -1086,20 +1053,13 @@ export default function App() {
   // ----------------------------------------------------
   const activePlayerShipsAtTime = Object.keys(displayPlayerBoard.activeShips);
   const activeEnemyShipsAtTime = Object.keys(displayAiBoard.activeShips);
-  const displayLog = history[playbackIndex];
-
-  // Reserved for potential future use (cell-level accuracy ratio).
-  const getAccuracy = (board) => {
-    if (board.shotsFired.size === 0) return 0;
-    return Math.round((board.hitsReceived.size / board.shotsFired.size) * 100);
-  };
 
   const getRoundAccuracy = (shooter) => {
-    const relevant = history.slice(0, playbackIndex + 1)
-      .filter(log => log.kind === 'attack' && log.shooter === shooter);
+    const relevant = displayEvents.slice(0, playbackIndex + 1)
+      .filter(ev => ev.kind === 'attack' && ev.shooter === shooter);
     if (relevant.length === 0) return 0;
-    const totalRounds = new Set(relevant.map(log => log.round)).size;
-    const hitRounds = new Set(relevant.filter(log => (log.hits ?? 0) > 0).map(log => log.round)).size;
+    const totalRounds = new Set(relevant.map(ev => ev.round)).size;
+    const hitRounds = new Set(relevant.filter(ev => (ev.hits ?? 0) > 0).map(ev => ev.round)).size;
     return Math.round((hitRounds / totalRounds) * 100);
   };
 
@@ -1136,7 +1096,7 @@ export default function App() {
         roundKeys={roundKeys}
         logsByRound={logsByRound}
         handleRoundTap={handleRoundTap}
-        onReturnToPresent={() => setPlaybackIndex(history.length - 1)}
+        onReturnToPresent={() => setPlaybackIndex(events.length - 1)}
       />
 
       {/* GLOBAL ACTION BUTTONS */}
