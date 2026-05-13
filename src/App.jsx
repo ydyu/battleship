@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Target, Ship, RefreshCw, AlertCircle, Crosshair, Navigation, ChevronDown, ChevronUp, Trophy, Skull, Shield, RotateCw, Trash2, Dices, Radar, Bug, FastForward, Brain, Volume2, VolumeX } from 'lucide-react';
-import { AI, placeFleetRandomly } from './ai';
+import { AI, AI_VARIANTS, placeFleetRandomly } from './ai';
 import {
   BOARD_SIZE,
   SHIPS,
@@ -136,6 +136,8 @@ const playSynth = (type) => {
 // 2. SUB-COMPONENTS
 // ==========================================
 
+const DIFFICULTY_LEVELS = ['novice', 'medium', 'expert', 'experiment'];
+
 export const DifficultyButton = ({ level, currentDifficulty, phase, onSelect }) => {
   const isSelected = currentDifficulty === level;
   const isDisabled = false;
@@ -181,7 +183,7 @@ const GameHeader = ({ phase, difficulty, setDifficulty, showDebug, setShowDebug,
         </div>
 
         <div className="flex gap-0.5">
-          {['novice', 'medium', 'expert', 'experiment'].map(level => (
+          {DIFFICULTY_LEVELS.filter(level => AI_VARIANTS.includes(level)).map(level => (
             <DifficultyButton 
               key={level} 
               level={level} 

@@ -9,7 +9,10 @@ import {
   ShipDefinition,
 } from './engine';
 
-export type AIDifficulty = 'novice' | 'medium' | 'expert' | 'experiment';
+export type AIDifficulty = 'novice' | 'medium' | 'expert';
+
+// To re-enable a difficulty, add it here AND restore it in AIDifficulty.
+export const AI_VARIANTS: AIDifficulty[] = ['novice', 'medium', 'expert'];
 
 export interface HeatmapResult {
   heatmap: number[][];
@@ -571,7 +574,8 @@ class MediumAI extends AIVariant {
   }
 }
 
-class ExpertAI extends AIVariant {
+// Unused in web UI; kept for sim.py comparisons.
+class LegacyAI1 extends AIVariant {
   protected readonly heatmapStrategy = new ExpertHeatmap();
 
   private readonly targeting = new HeatmapTargeting(true, true);
@@ -581,7 +585,7 @@ class ExpertAI extends AIVariant {
   }
 }
 
-class ExperimentAI extends AIVariant {
+class ExpertAI extends AIVariant {
   protected readonly heatmapStrategy = new ExperimentHeatmap();
 
   private readonly targeting = new HeatmapTargeting(true, true);
@@ -601,9 +605,6 @@ export class AI {
         break;
       case 'medium':
         this.variant = new MediumAI();
-        break;
-      case 'experiment':
-        this.variant = new ExperimentAI();
         break;
       case 'expert':
       default:
