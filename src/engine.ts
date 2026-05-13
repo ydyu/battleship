@@ -222,27 +222,24 @@ export class Board {
     });
   }
 
-  fire(startX: number, startY: number, pattern: PatternOffset[], ship: string = 'Unknown'): AttackResult {
+  getImpactCoordinates(startX: number, startY: number, pattern: PatternOffset[]): Coordinate[] {
+    return pattern
+      .map(([dx, dy]) => [startX + dx, startY + dy] as const)
+      .filter(([x, y]) => x >= 0 && x < this.size && y >= 0 && y < this.size)
+      .map(([x, y]) => toCoord(x, y));
+  }
+
+  applyAttack(coords: Coordinate[]): { hits: number; sunkShips: string[] } {
     let hits = 0;
-    const impactCells: Coordinate[] = [];
     const sunkShips: string[] = [];
 
-    pattern.forEach(([dx, dy]) => {
-      const x = startX + dx;
-      const y = startY + dy;
-
-      if (x < 0 || x >= this.size || y < 0 || y >= this.size) {
-        return;
-      }
-
-      const coord = toCoord(x, y);
-      impactCells.push(coord);
-
+    coords.forEach((coord) => {
       if (this.shotsFired.has(coord)) {
         return;
       }
 
       this.shotsFired.add(coord);
+      const [x, y] = fromCoord(coord);
 
       if (this.grid[x][y] !== 1) {
         this.misses.add(coord);
@@ -258,26 +255,14 @@ export class Board {
       }
     });
 
-    return { ship, origin: [startX, startY], impactCells, hits, sunkShips };
+    return { hits, sunkShips };
   }
 
-  applyLoggedAttack(coords: Coordinate[]): void {
-    coords.forEach((coord) => {
-      if (this.shotsFired.has(coord)) {
-        return;
-      }
+  fire(startX: number, startY: number, pattern: PatternOffset[], ship: string = 'Unknown'): AttackResult {
+    const impactCells = this.getImpactCoordinates(startX, startY, pattern);
+    const { hits, sunkShips } = this.applyAttack(impactCells);
 
-      this.shotsFired.add(coord);
-      const [x, y] = fromCoord(coord);
-
-      if (this.grid[x][y] !== 1) {
-        this.misses.add(coord);
-        return;
-      }
-
-      this.hitsReceived.add(coord);
-      this.processDamage(coord);
-    });
+    return { ship, origin: [startX, startY], impactCells, hits, sunkShips };
   }
 
   private processDamage(coord: Coordinate): string | null {
@@ -439,7 +424,7 @@ export class BattleshipMatch {
         continue;
       }
 
-      board.applyLoggedAttack(entry.coords);
+      board.applyAttack(entry.coords);
     }
 
     return board;
