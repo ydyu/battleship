@@ -559,8 +559,10 @@ abstract class AIVariant {
 class NoviceAI extends AIVariant {
   protected readonly heatmapStrategy = new FlatHeatmap();
 
+  private readonly targeting = new HeatmapTargeting(false, false);
+
   selectMove(enemyBoard: Board, myActiveShips: string[]): Move {
-    return getRandomMove(enemyBoard, getLargestShip(myActiveShips));
+    return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy);
   }
 }
 
