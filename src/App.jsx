@@ -253,7 +253,6 @@ const MobileTabs = ({ activeTab, setActiveTab, phase, unseenHits, isScrubbing })
 const FleetPanel = ({ 
   title, icon: Icon, shipsAlive, isInteractive, 
   selectedWeapon, onSelectWeapon, 
-  isScrubbing, onReturnToPresent,
   children 
 }) => {
   return (
@@ -261,14 +260,7 @@ const FleetPanel = ({
       
       <div className="flex justify-between items-center text-xs font-bold text-slate-400 uppercase tracking-wider px-1">
         <span className="flex items-center gap-1.5"><Icon className="w-3.5 h-3.5" /> {title}</span>
-        {isScrubbing ? (
-          <button 
-            onClick={onReturnToPresent} 
-            className="text-indigo-300 hover:text-white flex items-center gap-1 bg-indigo-500/20 hover:bg-indigo-500/40 px-2 py-0.5 rounded transition-colors animate-pulse z-10"
-          >
-            Present <FastForward className="w-3 h-3" />
-          </button>
-        ) : isInteractive ? (
+        {isInteractive ? (
           <span>{selectedWeapon ? "Target Locked" : "Select Weapon"}</span>
         ) : (
           <span>Status</span>
@@ -555,7 +547,8 @@ export const GameBoard = ({
 const CombatFeed = ({ 
   phase, turn, winner, isScrubbing, displayLog, 
   isFeedExpanded, setIsFeedExpanded, maxRound, currentRound, 
-  handleSliderChange, logContainerRef, roundKeys, logsByRound, handleRoundTap 
+  handleSliderChange, logContainerRef, roundKeys, logsByRound, handleRoundTap,
+  onReturnToPresent
 }) => {
   return (
     <div className="w-full max-w-5xl mb-4 relative z-50">
@@ -671,9 +664,18 @@ const CombatFeed = ({
                 onChange={handleSliderChange}
                 className="flex-1 accent-indigo-500 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer"
               />
-              <span className="text-[10px] sm:text-xs font-mono text-indigo-300 hidden sm:block whitespace-nowrap w-[100px] text-right">
-                Round {currentRound} / {maxRound}
-              </span>
+              {isScrubbing ? (
+                <button
+                  onClick={onReturnToPresent}
+                  className="text-indigo-300 hover:text-white flex items-center gap-1 bg-indigo-500/20 hover:bg-indigo-500/40 px-2 py-1 rounded transition-colors animate-pulse whitespace-nowrap text-[10px] sm:text-xs font-bold"
+                >
+                  Present <FastForward className="w-3 h-3" />
+                </button>
+              ) : (
+                <span className="text-[10px] sm:text-xs font-mono text-indigo-300 hidden sm:block whitespace-nowrap w-[100px] text-right">
+                  Round {currentRound} / {maxRound}
+                </span>
+              )}
             </div>
           )}
 
@@ -879,6 +881,16 @@ export default function App() {
     const isShip = playerBoard.grid[x][y] === 1 && !isHit;
 
     if (isShip) {
+      // Infer removed ship's orientation so the player can immediately re-place it the same way.
+      const shipName = playerBoard.getActiveShipNames().find(name => playerBoard.activeShips[name].includes(coord));
+      if (shipName) {
+        const coords = playerBoard.shipLayouts[shipName];
+        if (coords && coords.length > 1) {
+          const [ax] = coords[0].split(',').map(Number);
+          const [bx] = coords[1].split(',').map(Number);
+          setSetupOrientation(ax === bx ? 'vertical' : 'horizontal');
+        }
+      }
       const newBoard = cloneBoard(playerBoard);
       if (newBoard.removeShipAt(x, y)) {
         setPlayerBoard(newBoard);
@@ -889,6 +901,14 @@ export default function App() {
       if (newBoard.placeShip(currentSetupShip.name, x, y, setupOrientation)) {
         setPlayerBoard(newBoard);
         setHoverCell(null);
+      } else {
+        // Auto-rotate fallback: retry with the opposite orientation.
+        const altOrientation = setupOrientation === 'horizontal' ? 'vertical' : 'horizontal';
+        if (newBoard.placeShip(currentSetupShip.name, x, y, altOrientation)) {
+          setSetupOrientation(altOrientation);
+          setPlayerBoard(newBoard);
+          setHoverCell(null);
+        }
       }
     }
   };
@@ -1113,6 +1133,7 @@ export default function App() {
         roundKeys={roundKeys}
         logsByRound={logsByRound}
         handleRoundTap={handleRoundTap}
+        onReturnToPresent={() => setPlaybackIndex(history.length - 1)}
       />
 
       {/* GLOBAL ACTION BUTTONS */}
@@ -1202,8 +1223,6 @@ export default function App() {
                 setSelectedWeapon(s);
                 setTargetCell(null);
               }}
-              isScrubbing={isScrubbing}
-              onReturnToPresent={() => setPlaybackIndex(history.length - 1)}
             >
               {!winner && (
                 <button
@@ -1269,8 +1288,6 @@ export default function App() {
               shipsAlive={activeEnemyShipsAtTime} 
               isInteractive={false}
               selectedWeapon={null}
-              isScrubbing={isScrubbing}
-              onReturnToPresent={() => setPlaybackIndex(history.length - 1)}
             />
           )}
 
