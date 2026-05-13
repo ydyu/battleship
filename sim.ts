@@ -1,7 +1,7 @@
-import { AI, type AIDifficulty } from './src/ai';
+import { AI, ALL_AI_VARIANTS, type AIVariants } from './src/ai';
 import { resolveSimultaneousTurn } from './src/engine';
 
-const VALID_DIFFICULTIES = ['novice', 'medium', 'expert', 'experiment'] satisfies AIDifficulty[];
+const VALID_VARIANTS = ALL_AI_VARIANTS;
 
 const parseArgs = () => {
   const options = {
@@ -25,11 +25,11 @@ const parseArgs = () => {
   return options;
 };
 
-const isDifficulty = (value: string): value is AIDifficulty => VALID_DIFFICULTIES.includes(value as AIDifficulty);
+const isVariant = (value: string): value is AIVariants => (VALID_VARIANTS as readonly string[]).includes(value);
 
-const runMatch = (sideADifficulty: AIDifficulty, sideBDifficulty: AIDifficulty, verbose: boolean) => {
-  const sideA = new AI(sideADifficulty);
-  const sideB = new AI(sideBDifficulty);
+const runMatch = (sideAVariant: AIVariants, sideBVariant: AIVariants, verbose: boolean) => {
+  const sideA = new AI(sideAVariant);
+  const sideB = new AI(sideBVariant);
   let boardA = sideA.placeFleet();
   let boardB = sideB.placeFleet();
   let rounds = 0;
@@ -70,9 +70,10 @@ const runMatch = (sideADifficulty: AIDifficulty, sideBDifficulty: AIDifficulty, 
 const main = () => {
   const { sideA, sideB, games, verbose } = parseArgs();
 
-  if (!isDifficulty(sideA) || !isDifficulty(sideB) || !Number.isInteger(games) || games < 1) {
+  if (!isVariant(sideA) || !isVariant(sideB) || !Number.isInteger(games) || games < 1) {
+    const variants = VALID_VARIANTS.join('|');
     console.error(
-      'Usage: npm run sim -- --sideA <novice|medium|expert|experiment> --sideB <novice|medium|expert|experiment> --games <positive-int> [--verbose]',
+      `Usage: npm run sim -- --sideA <${variants}> --sideB <${variants}> --games <positive-int> [--verbose]`,
     );
     process.exit(1);
   }

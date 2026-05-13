@@ -9,10 +9,9 @@ import {
   ShipDefinition,
 } from './engine';
 
-export type AIDifficulty = 'novice' | 'medium' | 'expert';
-
-// To re-enable a difficulty, add it here AND restore it in AIDifficulty.
-export const AI_VARIANTS: AIDifficulty[] = ['novice', 'medium', 'expert'];
+export const AI_VARIANTS = ['novice', 'medium', 'expert'] as const;
+export const ALL_AI_VARIANTS = [...AI_VARIANTS, 'legacy1'] as const;
+export type AIVariants = typeof ALL_AI_VARIANTS[number];
 
 export interface HeatmapResult {
   heatmap: number[][];
@@ -379,7 +378,40 @@ const getSaturationCount = (
   return maxCount;
 };
 
+const maxRunThrough = (board: Board, x: number, y: number, excluded: Set<string> = new Set()): number => {
+  const blocked = (coord: string) => board.misses.has(coord) || board.sunkCells.has(coord) || excluded.has(coord);
+  let hL = 0, hR = 0, vU = 0, vD = 0;
+  for (let nx = x - 1; nx >= 0 && !blocked(`${nx},${y}`); nx -= 1) hL += 1;
+  for (let nx = x + 1; nx < BOARD_SIZE && !blocked(`${nx},${y}`); nx += 1) hR += 1;
+  for (let ny = y - 1; ny >= 0 && !blocked(`${x},${ny}`); ny -= 1) vU += 1;
+  for (let ny = y + 1; ny < BOARD_SIZE && !blocked(`${x},${ny}`); ny += 1) vD += 1;
+  return Math.max(hL + 1 + hR, vU + 1 + vD);
+};
+
+const remainderIsValid = (
+  board: Board,
+  remainingWounds: Set<string>,
+  remainingShips: string[],
+  excluded: Set<string> = new Set(),
+): boolean => {
+  if (remainingWounds.size === 0) return true;
+  if (remainingShips.length === 0) return false;
+
+  const sizes = remainingShips.map(getShipSize);
+  const maxSize = Math.max(...sizes);
+
+  for (const w of remainingWounds) {
+    const [wx, wy] = fromCoord(w);
+    const run = maxRunThrough(board, wx, wy, excluded);
+    if (!sizes.some(sz => sz <= run)) return false;
+  }
+
+  const sat = getSaturationCount(remainingWounds, maxSize, board, remainingShips.length + 1);
+  return sat <= remainingShips.length;
+};
+
 class ExperimentHeatmap implements HeatmapStrategy {
+
   generate(board: Board, activeShipNames: string[]): RawHeatmapResult {
     const rawHeatmap = createHeatmap(0);
     const unsunkHits = getUnsunkHits(board);
@@ -421,7 +453,12 @@ class ExperimentHeatmap implements HeatmapStrategy {
             let weight = 0;
 
             if (overlapsH > 0) {
-              weight = (isBiggest ? 2 : 1) * 4 ** overlapsH;
+              const coveredH = new Set(Array.from({length: size}, (_, i) => `${x + i},${y}`));
+              const remWounds = new Set([...unsunkHits].filter(w => !coveredH.has(w)));
+              const remShips = activeShipNames.filter(s => s !== shipName);
+              if (remainderIsValid(board, remWounds, remShips, coveredH)) {
+                weight = (isBiggest ? 2 : 1) * 4 ** overlapsH;
+              }
             } else if (!isScoutingRedundant) {
               weight = 1;
             }
@@ -456,7 +493,12 @@ class ExperimentHeatmap implements HeatmapStrategy {
           let weight = 0;
 
           if (overlapsV > 0) {
-            weight = (isBiggest ? 2 : 1) * 4 ** overlapsV;
+            const coveredV = new Set(Array.from({length: size}, (_, i) => `${x},${y + i}`));
+            const remWounds = new Set([...unsunkHits].filter(w => !coveredV.has(w)));
+            const remShips = activeShipNames.filter(s => s !== shipName);
+            if (remainderIsValid(board, remWounds, remShips, coveredV)) {
+              weight = (isBiggest ? 2 : 1) * 4 ** overlapsV;
+            }
           } else if (!isScoutingRedundant) {
             weight = 1;
           }
@@ -597,11 +639,12 @@ class ExpertAI extends AIVariant {
   }
 }
 
+
 export class AI {
   private readonly variant: AIVariant;
 
-  constructor(difficulty: AIDifficulty = 'expert') {
-    switch (difficulty) {
+  constructor(variant: AIVariants = 'expert') {
+    switch (variant) {
       case 'novice':
         this.variant = new NoviceAI();
         break;
@@ -609,6 +652,11 @@ export class AI {
         this.variant = new MediumAI();
         break;
       case 'expert':
+        this.variant = new ExpertAI();
+        break;
+      case 'legacy1':
+        this.variant = new LegacyAI1();
+        break;
       default:
         this.variant = new ExpertAI();
         break;

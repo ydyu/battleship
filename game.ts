@@ -1,9 +1,9 @@
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { AI, type AIDifficulty, placeFleetRandomly } from './src/ai';
+import { AI, ALL_AI_VARIANTS, type AIVariants, placeFleetRandomly } from './src/ai';
 import { BOARD_SIZE, Board, SHIP_INDEX, SHIP_NAMES, SHOT_PATTERNS, resolveSimultaneousTurn } from './src/engine';
 
-const VALID_DIFFICULTIES = ['novice', 'medium', 'expert', 'experiment'] satisfies AIDifficulty[];
+const VALID_VARIANTS = ALL_AI_VARIANTS;
 const COLUMN_LABELS = Array.from({ length: BOARD_SIZE }, (_, index) => String.fromCharCode(65 + index));
 
 const sortShipsForPrompt = (shipNames: string[]) =>
@@ -35,7 +35,7 @@ const parseArgs = () => {
   return options;
 };
 
-const isDifficulty = (value: string): value is AIDifficulty => VALID_DIFFICULTIES.includes(value as AIDifficulty);
+const isVariant = (value: string): value is AIVariants => (VALID_VARIANTS as readonly string[]).includes(value);
 
 const clearScreen = () => {
   if (output.isTTY) console.clear();
@@ -192,12 +192,12 @@ const main = async () => {
   const { ai, help } = parseArgs();
 
   if (help) {
-    console.log('Usage: npm run game -- --ai <novice|medium|expert|experiment>');
+    console.log(`Usage: npm run game -- --ai <${VALID_VARIANTS.join('|')}>`);
     return;
   }
 
-  if (!isDifficulty(ai)) {
-    console.error('Invalid AI difficulty. Use one of: novice, medium, expert, experiment.');
+  if (!isVariant(ai)) {
+    console.error(`Invalid AI variant. Use one of: ${VALID_VARIANTS.join(', ')}.`);
     process.exit(1);
   }
 
@@ -209,7 +209,7 @@ const main = async () => {
 
   try {
     console.log('Welcome to Tactical Battleship!');
-    console.log(`AI difficulty: ${ai}`);
+    console.log(`AI variant: ${ai}`);
     await rl.question('\nPress Enter to begin...');
 
     while (true) {

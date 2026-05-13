@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AI, placeFleetRandomly } from './ai';
-import { Board, SHIPS } from './engine';
+import { Board, SHIPS, resolveSimultaneousTurn } from './engine';
 
 describe('ai', () => {
   it('places a full fleet without overlaps', () => {
@@ -16,7 +16,7 @@ describe('ai', () => {
     const board = new Board();
     board.placeShip('Destroyer', 0, 0, 'vertical');
 
-    const heatmap = new AI('experiment').getHeatmap(board);
+    const heatmap = new AI('expert').getHeatmap(board);
     const values = heatmap.heatmap.flat();
 
     expect(values.every((value) => value >= 0 && value <= 1)).toBe(true);
@@ -27,7 +27,7 @@ describe('ai', () => {
     const targetBoard = new Board();
     targetBoard.placeShip('Destroyer', 0, 0, 'vertical');
 
-    ['novice', 'medium', 'expert', 'experiment'].forEach((difficulty) => {
+    ['novice', 'medium', 'expert'].forEach((difficulty) => {
       const ai = new AI(difficulty);
       const move = ai.selectMove(targetBoard, ['Carrier', 'Battleship', 'Destroyer']);
 
@@ -36,8 +36,8 @@ describe('ai', () => {
     });
   });
 
-  it('ExperimentAI: disables open-ocean scouting when all remaining ships are wounded (Saturation Heuristic)', () => {
-    const ai = new AI('experiment');
+  it('ExpertAI: disables open-ocean scouting when all remaining ships are wounded (Saturation Heuristic)', () => {
+    const ai = new AI('expert');
     const board = new Board();
 
     // Setup: 2 ships left, only 1 hit. Scouting should NOT be redundant.
@@ -65,8 +65,8 @@ describe('ai', () => {
     expect(heatmap2.rawHeatmap[5][6]).toBeGreaterThan(0);
   });
 
-  it('ExperimentAI: identifies separate ships when hits are separated by an obstacle (Saturation Heuristic)', () => {
-    const ai = new AI('experiment');
+  it('ExpertAI: identifies separate ships when hits are separated by an obstacle (Saturation Heuristic)', () => {
+    const ai = new AI('expert');
     const board = new Board();
 
     // Setup: 2 ships left (size 5). Hits at (0,0) and (0,2). 
@@ -90,5 +90,54 @@ describe('ai', () => {
     const heatmap2 = ai.getHeatmap(board, ['Carrier', 'Battleship']);
     // (9,9) should now be 0 because the miss proves (0,0) and (0,2) are DIFFERENT ships
     expect(heatmap2.rawHeatmap[9][9]).toBe(0);
+  });
+
+  it('ExpertAI: prunes placements whose remainder wound cannot be reached by any remaining ship', () => {
+    const board = new Board();
+
+    // Board corner (see pruning-sample.txt):
+    //   (0,0)=wound  (1,0)=open   (2,0)=miss
+    //   (0,1)=open   (1,1)=miss
+    //   (0,2)=wound  (1,2)=miss
+    //   (0,3)=miss   (rest is open ocean)
+    board.hitsReceived.add('0,0');
+    board.hitsReceived.add('0,2');
+    board.misses.add('2,0');
+    board.misses.add('1,1');
+    board.misses.add('1,2');
+    board.misses.add('0,3');
+
+    const activeShips = ['Destroyer', 'PatrolBoat'];
+
+    const ai = new AI('expert');
+    const heatmap = ai.getHeatmap(board, activeShips);
+
+    // Cell (1,0) is only reachable via PatrolH(0,0)→(1,0) [wound-overlapping].
+    // All other horizontal/vertical ships through (1,0) are blocked by misses.
+    //
+    // PatrolH(0,0)→(1,0): remainder wound (0,2), ships=[Destroyer].
+    //   With pruning + excluded={(0,0),(1,0)}: maxRunThrough(0,2) can reach (0,1)
+    //   but not (0,0) → run=2, Destroyer(3)>2 → PRUNED → weight=0.
+    expect(heatmap.rawHeatmap[1][0]).toBe(0);
+  });
+
+  it('completes a full game between expert and medium without errors', () => {
+    const aiA = new AI('expert');
+    const aiB = new AI('medium');
+    let boardA = aiA.placeFleet();
+    let boardB = aiB.placeFleet();
+    let rounds = 0;
+
+    while (!boardA.isGameOver() && !boardB.isGameOver()) {
+      rounds += 1;
+      expect(rounds).toBeLessThan(500);
+      const moveA = aiA.selectMove(boardB, boardA.getActiveShipNames());
+      const moveB = aiB.selectMove(boardA, boardB.getActiveShipNames());
+      const result = resolveSimultaneousTurn({ round: rounds, boardA, moveA, boardB, moveB });
+      boardA = result.boardA;
+      boardB = result.boardB;
+    }
+
+    expect(boardA.isGameOver() || boardB.isGameOver()).toBe(true);
   });
 });

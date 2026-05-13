@@ -136,6 +136,7 @@ const playSynth = (type) => {
 // 2. SUB-COMPONENTS
 // ==========================================
 
+// 'experiment' is a placeholder — add to AI_VARIANTS when a new experimental AI is ready.
 const DIFFICULTY_LEVELS = ['novice', 'medium', 'expert', 'experiment'];
 
 export const DifficultyButton = ({ level, currentDifficulty, phase, onSelect }) => {
