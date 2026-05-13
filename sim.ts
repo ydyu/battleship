@@ -71,31 +71,83 @@ const main = () => {
   const { sideA, sideB, games, verbose } = parseArgs();
 
   if (!isDifficulty(sideA) || !isDifficulty(sideB) || !Number.isInteger(games) || games < 1) {
-    console.error('Usage: npm run sim -- --sideA <novice|medium|expert|experiment> --sideB <novice|medium|expert|experiment> --games <positive-int> [--verbose]');
+    console.error(
+      'Usage: npm run sim -- --sideA <novice|medium|expert|experiment> --sideB <novice|medium|expert|experiment> --games <positive-int> [--verbose]',
+    );
     process.exit(1);
   }
 
+  console.log(`Simulation: ${sideA} (A) vs ${sideB} (B)`);
+  console.log(`Mode: SIMULTANEOUS TURNS`);
+  console.log(`Running ${games} games...`);
+
   const summary = {
-    sideA: 0,
-    sideB: 0,
-    draw: 0,
-    rounds: 0,
+    sideA: { wins: 0, rounds: [] as number[] },
+    sideB: { wins: 0, rounds: [] as number[] },
+    draw: { count: 0, rounds: [] as number[] },
   };
 
   for (let i = 0; i < games; i += 1) {
     const result = runMatch(sideA, sideB, verbose);
-    summary.rounds += result.rounds;
 
-    if (result.winnerId === 'sideA') summary.sideA += 1;
-    else if (result.winnerId === 'sideB') summary.sideB += 1;
-    else summary.draw += 1;
+    if (result.winnerId === 'sideA') {
+      summary.sideA.wins += 1;
+      summary.sideA.rounds.push(result.rounds);
+    } else if (result.winnerId === 'sideB') {
+      summary.sideB.wins += 1;
+      summary.sideB.rounds.push(result.rounds);
+    } else {
+      summary.draw.count += 1;
+      summary.draw.rounds.push(result.rounds);
+    }
+
+    const progressInterval = Math.max(1, Math.floor(games / 10));
+    if ((i + 1) % progressInterval === 0 || i + 1 === games) {
+      console.log(` Progress: ${i + 1}/${games}...`);
+    }
   }
 
-  console.log(`Simulated ${games} game(s)`);
-  console.log(`sideA (${sideA}) wins: ${summary.sideA}`);
-  console.log(`sideB (${sideB}) wins: ${summary.sideB}`);
-  console.log(`draws: ${summary.draw}`);
-  console.log(`average rounds: ${(summary.rounds / games).toFixed(2)}`);
+  const getStats = (rounds: number[]) => {
+    if (rounds.length === 0) return { avg: 'N/A', min: 'N/A', max: 'N/A' };
+    const sum = rounds.reduce((a, b) => a + b, 0);
+    return {
+      avg: (sum / rounds.length).toFixed(2),
+      min: Math.min(...rounds),
+      max: Math.max(...rounds),
+    };
+  };
+
+  console.log('\n' + '='.repeat(40));
+  console.log('SIMULATION RESULTS');
+  console.log('='.repeat(40));
+
+  const statsA = getStats(summary.sideA.rounds);
+  console.log(`Side A (${sideA.toUpperCase()}):`);
+  console.log(`  Wins:      ${summary.sideA.wins} (${((summary.sideA.wins / games) * 100).toFixed(1)}%)`);
+  console.log(`  Avg Rounds: ${statsA.avg}`);
+  if (summary.sideA.rounds.length > 0) {
+    console.log(`  Min/Max:   ${statsA.min} / ${statsA.max}`);
+  }
+
+  const statsB = getStats(summary.sideB.rounds);
+  console.log(`\nSide B (${sideB.toUpperCase()}):`);
+  console.log(`  Wins:      ${summary.sideB.wins} (${((summary.sideB.wins / games) * 100).toFixed(1)}%)`);
+  console.log(`  Avg Rounds: ${statsB.avg}`);
+  if (summary.sideB.rounds.length > 0) {
+    console.log(`  Min/Max:   ${statsB.min} / ${statsB.max}`);
+  }
+
+  if (summary.draw.count > 0) {
+    const statsDraw = getStats(summary.draw.rounds);
+    console.log(`\nDraws:       ${summary.draw.count} (${((summary.draw.count / games) * 100).toFixed(1)}%)`);
+    console.log(`  Avg Rounds: ${statsDraw.avg}`);
+  }
+
+  const allRounds = [...summary.sideA.rounds, ...summary.sideB.rounds, ...summary.draw.rounds];
+  const globalAvg = (allRounds.reduce((a, b) => a + b, 0) / allRounds.length).toFixed(2);
+  console.log('\n' + '-'.repeat(20));
+  console.log(`Global Average: ${globalAvg} rounds per game`);
+  console.log('='.repeat(40));
 };
 
 main();
