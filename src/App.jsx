@@ -138,7 +138,9 @@ const playSynth = (type) => {
 
 export const DifficultyButton = ({ level, currentDifficulty, phase, onSelect }) => {
   const isSelected = currentDifficulty === level;
-  const isDisabled = phase === 'battle';
+  const isDisabled = false;
+
+  const SHORT_LABELS = { novice: 'nov', medium: 'med', expert: 'exp', experiment: 'xpr' };
   
   const baseClasses = "px-2 sm:px-3 py-1 text-[9px] sm:text-[10px] font-bold uppercase rounded transition-all duration-300 whitespace-nowrap shrink-0 select-none";
   const cursorClass = isDisabled ? 'cursor-not-allowed' : 'cursor-pointer';
@@ -156,7 +158,7 @@ export const DifficultyButton = ({ level, currentDifficulty, phase, onSelect }) 
       onClick={() => !isDisabled && onSelect(level)}
       className={`${baseClasses} ${cursorClass} ${colorClasses}`}
     >
-      <span className="sm:hidden leading-none mt-[1px]">{level.substring(0, 3)}</span>
+      <span className="sm:hidden leading-none mt-[1px]">{SHORT_LABELS[level] ?? level.substring(0, 3)}</span>
       <span className="hidden sm:inline leading-none mt-[1px]">{level}</span>
     </button>
   );
@@ -172,14 +174,14 @@ const GameHeader = ({ phase, difficulty, setDifficulty, showDebug, setShowDebug,
     <div className="flex items-center gap-1 sm:gap-2">
       <div 
         className="flex bg-slate-900 rounded-lg p-0.5 border border-slate-800 items-center shrink-0 transition-colors duration-300"
-        title={phase === 'battle' ? "Difficulty locked during combat" : "Select AI Difficulty"}
+        title="Select AI Difficulty"
       >
-        <div className={`hidden sm:flex items-center justify-center px-1.5 transition-colors duration-300 ${phase === 'battle' ? 'text-slate-700' : 'text-slate-400'}`}>
+        <div className="hidden sm:flex items-center justify-center px-1.5 text-slate-400">
           <Brain className="w-3.5 h-3.5" />
         </div>
 
         <div className="flex gap-0.5">
-          {['novice', 'medium', 'expert'].map(level => (
+          {['novice', 'medium', 'expert', 'experiment'].map(level => (
             <DifficultyButton 
               key={level} 
               level={level} 

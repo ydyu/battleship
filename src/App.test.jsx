@@ -5,7 +5,7 @@ import { DifficultyButton, GameBoard } from './App';
 import { createEmptyBoard } from './engine';
 
 describe('App module components', () => {
-  it('renders difficulty buttons as disabled during battle', () => {
+  it('renders difficulty buttons as always enabled (never disabled during battle)', () => {
     const markup = renderToStaticMarkup(
       <DifficultyButton
         level="expert"
@@ -15,7 +15,7 @@ describe('App module components', () => {
       />,
     );
 
-    expect(markup).toContain('aria-disabled="true"');
+    expect(markup).toContain('aria-disabled="false"');
     expect(markup).toContain('exp');
   });
 
