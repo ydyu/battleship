@@ -1065,9 +1065,19 @@ export default function App() {
   const activeEnemyShipsAtTime = Object.keys(displayAiBoard.activeShips);
   const displayLog = history[playbackIndex];
 
+  // Reserved for potential future use (cell-level accuracy ratio).
   const getAccuracy = (board) => {
     if (board.shotsFired.size === 0) return 0;
     return Math.round((board.hitsReceived.size / board.shotsFired.size) * 100);
+  };
+
+  const getRoundAccuracy = (shooter) => {
+    const relevant = history.slice(0, playbackIndex + 1)
+      .filter(log => log.kind === 'attack' && log.shooter === shooter);
+    if (relevant.length === 0) return 0;
+    const totalRounds = new Set(relevant.map(log => log.round)).size;
+    const hitRounds = new Set(relevant.filter(log => (log.hits ?? 0) > 0).map(log => log.round)).size;
+    return Math.round((hitRounds / totalRounds) * 100);
   };
 
   // ----------------------------------------------------
@@ -1161,7 +1171,7 @@ export default function App() {
                 Enemy Waters
               </h2>
               <span className="text-xs font-mono bg-cyan-500/20 text-cyan-400 px-2 py-1 rounded">
-                Accuracy: {getAccuracy(displayAiBoard)}%
+                Accuracy: {getRoundAccuracy('player')}%
               </span>
             </div>
             
@@ -1221,7 +1231,7 @@ export default function App() {
               {phase === 'setup' ? "Staging Area" : "Your Fleet"}
             </h2>
             <span className={`text-[10px] sm:text-xs font-mono px-2 py-1 rounded ${phase === 'setup' ? 'bg-slate-800 text-slate-400' : 'bg-red-500/20 text-red-400'}`}>
-              {phase === 'setup' ? `Deployed: ${activePlayerShipsAtTime.length}/5` : `Enemy Acc: ${getAccuracy(displayPlayerBoard)}%`}
+              {phase === 'setup' ? `Deployed: ${activePlayerShipsAtTime.length}/5` : `Enemy Acc: ${getRoundAccuracy('ai')}%`}
             </span>
           </div>
           
