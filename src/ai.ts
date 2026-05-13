@@ -302,6 +302,80 @@ class ExpertHeatmap implements HeatmapStrategy {
   }
 }
 
+const fromCoord = (coord: string): [number, number] =>
+  coord.split(',').map(Number) as [number, number];
+
+const getSaturationCount = (
+  unsunkHits: Set<string>,
+  maxSize: number,
+  board: Board,
+  limit: number,
+): number => {
+  const hits = Array.from(unsunkHits).map(fromCoord);
+  if (hits.length === 0) return 0;
+  if (hits.length > 16) return 1; // Performance safety: just assume wounded if too many hits
+
+  let maxCount = 0;
+  const currentSet: [number, number][] = [];
+
+  const canBeSame = (p1: [number, number], p2: [number, number]): boolean => {
+    const [x1, y1] = p1;
+    const [x2, y2] = p2;
+
+    if (x1 !== x2 && y1 !== y2) return false;
+
+    const dist = Math.abs(x1 - x2) + Math.abs(y1 - y2);
+    if (dist >= maxSize) return false;
+
+    if (x1 === x2) {
+      const minY = Math.min(y1, y2);
+      const maxY = Math.max(y1, y2);
+      for (let y = minY + 1; y < maxY; y += 1) {
+        const coord = `${x1},${y}`;
+        if (board.misses.has(coord) || board.sunkCells.has(coord)) return false;
+      }
+    } else {
+      const minX = Math.min(x1, x2);
+      const maxX = Math.max(x1, x2);
+      for (let x = minX + 1; x < maxX; x += 1) {
+        const coord = `${x},${y1}`;
+        if (board.misses.has(coord) || board.sunkCells.has(coord)) return false;
+      }
+    }
+
+    return true;
+  };
+
+  const solve = (idx: number) => {
+    if (maxCount >= limit) return;
+    if (idx === hits.length) {
+      maxCount = Math.max(maxCount, currentSet.length);
+      return;
+    }
+
+    if (currentSet.length + (hits.length - idx) <= maxCount) return;
+
+    let canAdd = true;
+    for (let i = 0; i < currentSet.length; i += 1) {
+      if (canBeSame(hits[idx], currentSet[i])) {
+        canAdd = false;
+        break;
+      }
+    }
+
+    if (canAdd) {
+      currentSet.push(hits[idx]);
+      solve(idx + 1);
+      currentSet.pop();
+    }
+
+    solve(idx + 1);
+  };
+
+  solve(0);
+  return maxCount;
+};
+
 class ExperimentHeatmap implements HeatmapStrategy {
   generate(board: Board, activeShipNames: string[]): RawHeatmapResult {
     const rawHeatmap = createHeatmap(0);
@@ -310,7 +384,14 @@ class ExperimentHeatmap implements HeatmapStrategy {
 
     const maxActiveSize =
       activeShipNames.length > 0 ? Math.max(...activeShipNames.map(getShipSize)) : 0;
-    const isLastShipWounded = activeShipNames.length === 1 && unsunkHits.size > 0;
+    
+    const saturationCount = getSaturationCount(
+      unsunkHits,
+      maxActiveSize,
+      board,
+      activeShipNames.length
+    );
+    const isScoutingRedundant = saturationCount >= activeShipNames.length;
 
     activeShipNames.forEach((shipName) => {
       const size = getShipSize(shipName);
@@ -338,7 +419,7 @@ class ExperimentHeatmap implements HeatmapStrategy {
 
             if (overlapsH > 0) {
               weight = (isBiggest ? 2 : 1) * 4 ** overlapsH;
-            } else if (!isLastShipWounded) {
+            } else if (!isScoutingRedundant) {
               weight = 1;
             }
 
@@ -373,7 +454,7 @@ class ExperimentHeatmap implements HeatmapStrategy {
 
           if (overlapsV > 0) {
             weight = (isBiggest ? 2 : 1) * 4 ** overlapsV;
-          } else if (!isLastShipWounded) {
+          } else if (!isScoutingRedundant) {
             weight = 1;
           }
 
