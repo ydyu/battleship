@@ -113,7 +113,7 @@ class MediumHeatmap implements HeatmapStrategy {
     const unsunkHits = getUnsunkHits(board);
     let maxVal = 0;
 
-    activeShipNames.forEach((shipName) => {
+    [getLargestShip(activeShipNames)].forEach((shipName) => {
       const size = getShipSize(shipName);
 
       for (let y = 0; y < BOARD_SIZE; y += 1) {
