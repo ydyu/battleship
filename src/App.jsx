@@ -666,7 +666,6 @@ const CombatFeed = ({
                            if (!action) return null;
                            const fmt = fmtStats(stats?.[sideKey]);
                            const isZero = action.hits === 0;
-                           const sunkShip = action.sunkShips?.[0] ?? null;
                            return (
                              <>
                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', alignSelf: 'center' }}>
@@ -674,7 +673,9 @@ const CombatFeed = ({
                                  <span style={{ fontSize: '11px', fontWeight: 500, color: sideColor }}>{action.ship}</span>
                                </div>
                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '2px', alignSelf: 'center', fontFamily: 'ui-monospace,monospace', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: isZero ? '#94a3b8' : sideColor }}>
-                                 {sunkShip && renderShipIcon(sunkShip, '#94a3b8')}
+                                 {action.sunkShips?.map((s, i) => (
+                                   <React.Fragment key={`${s}-${i}`}>{renderShipIcon(s, '#94a3b8')}</React.Fragment>
+                                 ))}
                                  {!isZero && <span>💥</span>}
                                  <span>{action.coordCount ? `${action.hits}/${action.coordCount}` : '—'}</span>
                                </div>

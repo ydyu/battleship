@@ -34,7 +34,7 @@ def show_patterns():
 class Game:
     def __init__(self):
         self.match = BattleshipMatch()
-        self.ai_agent = AI(difficulty='experiment')
+        self.ai_agent = AI(difficulty='expert')
 
     @property
     def player_board(self):

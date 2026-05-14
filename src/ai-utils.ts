@@ -23,9 +23,20 @@ export const getLargestShip = (activeShips: string[]): string =>
 
     return currentShip.index < largestShip.index ? shipName : largest;
   }, null) ?? SHIP_NAMES[SHIP_NAMES.length - 1];
+export const createHeatmap = (fill = 0): number[][] =>
+  Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(fill));
+
+export const normalizeHeatmap = (rawHeatmap: number[][], maxVal: number): number[][] => {
+  if (maxVal <= 0) {
+    return createHeatmap(0);
+  }
+
+  return rawHeatmap.map((column) => column.map((value) => value / maxVal));
+};
 
 /**
  * Calculates the minimum number of ships required to explain the current unsunk hits.
+...
  * Used to determine if scouting is redundant.
  */
 export const getSaturationCount = (

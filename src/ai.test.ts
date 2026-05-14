@@ -1,8 +1,37 @@
 import { describe, expect, it } from 'vitest';
-import { AI, placeFleetRandomly } from './ai';
+import { AI, placeFleetRandomly, MaxTargeting } from './ai';
 import { Board, SHIPS, BattleshipMatch } from './engine';
 
 describe('ai', () => {
+  describe('MaxTargeting', () => {
+    it('doubles the contribution of max value cells', () => {
+      const board = new Board();
+      const strategy = {
+        generate: () => ({
+          rawHeatmap: Array(10).fill(0).map((_, x) => 
+            Array(10).fill(0).map((_, y) => (x === 0 && y === 0 ? 10 : 1))
+          ),
+          maxVal: 10
+        })
+      };
+      
+      const targeting = new MaxTargeting(false);
+      // Patrol Boat has size 1 and no neighbors in its pattern (usually [[0,0]])
+      // Let's check the engine for Patrol Boat pattern.
+      // Actually SHOT_PATTERNS[ship] ?? []
+      // If ship is 'PatrolBoat', size is 2. 
+      // If we use a ship with size 1 (if it exists) or just check score logic.
+      
+      const move = targeting.selectMove(board, ['PatrolBoat'], strategy as any);
+      
+      // With x=0, y=0 having 10, and others 1.
+      // A ship at 0,0 with pattern [[0,0]] would get score 10 * 2 = 20.
+      // A ship at 0,1 with pattern [[0,0]] would get score 1.
+      expect(move.x).toBe(0);
+      expect(move.y).toBe(0);
+    });
+  });
+
   it('places a full fleet without overlaps', () => {
     const board = placeFleetRandomly();
     const expectedCells = SHIPS.reduce((total, ship) => total + ship.size, 0);

@@ -152,74 +152,6 @@ class ExpertHeatmap(HeatmapStrategy):
                                     max_val = max(max_val, heatmap[x][y + i])
         return heatmap, max_val
 
-class ExperimentHeatmap(HeatmapStrategy):
-    """Improved heatmap that balances scouting and hunting."""
-    def generate(self, board: Board, active_ship_names: List[str], unsunk_hits: Set[Tuple[int, int]]) -> Tuple[List[List[float]], float]:
-        heatmap = [[0.0 for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
-        max_val = 0.0
-        ship_info = {name: size for name, size in SHIPS}
-
-        max_active_size = max(ship_info[n] for n in active_ship_names) if active_ship_names else 0
-        is_last_ship_wounded = len(active_ship_names) == 1 and len(unsunk_hits) > 0
-
-        for ship_name in active_ship_names:
-            size = ship_info[ship_name]
-            is_biggest = (size == max_active_size)
-
-            for y in range(BOARD_SIZE):
-                for x in range(BOARD_SIZE):
-                    # Horizontal Check
-                    valid_h = True
-                    overlaps_h = 0
-                    for i in range(size):
-                        nx = x + i
-                        if nx >= BOARD_SIZE or (nx, y) in board.misses or (nx, y) in board.sunk_cells:
-                            valid_h = False
-                            break
-                        if (nx, y) in unsunk_hits:
-                            overlaps_h += 1
-                    
-                    if valid_h:
-                        weight = 0.0
-                        if overlaps_h > 0:
-                            threat = 2.0 if is_biggest else 1.0
-                            weight = threat * (4 ** overlaps_h)
-                        else:
-                            if not is_last_ship_wounded:
-                                weight = 1.0 
-
-                        if weight > 0:
-                            for i in range(size):
-                                heatmap[x + i][y] += weight
-                                max_val = max(max_val, heatmap[x + i][y])
-
-                    # Vertical Check
-                    if size > 1:
-                        valid_v = True
-                        overlaps_v = 0
-                        for i in range(size):
-                            ny = y + i
-                            if ny >= BOARD_SIZE or (x, ny) in board.misses or (x, ny) in board.sunk_cells:
-                                valid_v = False
-                                break
-                            if (x, ny) in unsunk_hits:
-                                overlaps_v += 1
-                        
-                        if valid_v:
-                            weight = 0.0
-                            if overlaps_v > 0:
-                                threat = 2.0 if is_biggest else 1.0
-                                weight = threat * (4 ** overlaps_v)
-                            else:
-                                if not is_last_ship_wounded:
-                                    weight = 1.0 
-
-                            if weight > 0:
-                                for i in range(size):
-                                    heatmap[x][y + i] += weight
-                                    max_val = max(max_val, heatmap[x][y + i])
-        return heatmap, max_val
-
 # ==========================================
 # 2. TARGETING STRATEGIES
 # ==========================================
@@ -326,14 +258,6 @@ class ExpertAI(AIVariant):
     def select_move(self, enemy_board: Board, my_active_ships: List[str]) -> Tuple[int, int, str]:
         return self.targeting.select_move(enemy_board, my_active_ships, self.heatmap)
 
-class ExperimentAI(AIVariant):
-    """The most balanced variant: scouts in the open, hunts when blood is found."""
-    def __init__(self):
-        self.heatmap = ExperimentHeatmap()
-        self.targeting = HeatmapTargeting(use_parity_check=True, test_all_weapons=True)
-    def select_move(self, enemy_board: Board, my_active_ships: List[str]) -> Tuple[int, int, str]:
-        return self.targeting.select_move(enemy_board, my_active_ships, self.heatmap)
-
 # Factory-like wrapper for backward compatibility or easy use
 class AI(AIVariant):
     def __init__(self, difficulty: str = 'expert'):
@@ -341,8 +265,6 @@ class AI(AIVariant):
             self.variant = NoviceAI()
         elif difficulty == 'medium':
             self.variant = MediumAI()
-        elif difficulty == 'experiment':
-            self.variant = ExperimentAI()
         else:
             self.variant = ExpertAI()
 

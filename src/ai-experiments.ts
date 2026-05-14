@@ -1,73 +1,32 @@
+import { Board, Move, BOARD_SIZE, SHIP_TYPES } from './engine';
 import {
-  BOARD_SIZE,
-  Board,
-  Move,
-  SHIP_INDEX,
-  SHIP_NAMES,
-  SHIP_TYPES,
-  SHOT_PATTERNS,
-  ShipDefinition,
-} from './engine';
+  AIVariant,
+  HeatmapStrategy,
+  HeatmapTargeting,
+  MaxTargeting,
+  RawHeatmapResult,
+} from './ai-base';
 import {
+  createHeatmap,
+  getUnsunkHits,
+  getShipSize,
   fromCoord,
+  maxRunThrough,
   getLargestShip,
   getSaturationCount,
-  getShipSize,
-  getUnsunkHits,
-  maxRunThrough,
   remainderIsValid,
-  createHeatmap,
-  normalizeHeatmap,
 } from './ai-utils';
-import { 
-  HeatmapResult, 
-  RawHeatmapResult, 
-  HeatmapStrategy, 
-  PlacementStrategy, 
-  AIVariant, 
-  HeatmapTargeting, 
-  MaxTargeting,
-  RandomPlacementStrategy 
-} from './ai-base';
-import { EXPERIMENTS } from './ai-experiments';
 
-// Re-exporting for convenience and backward compatibility if needed
-export type { 
-  HeatmapResult, 
-  RawHeatmapResult, 
-  HeatmapStrategy, 
-  PlacementStrategy 
-};
-export { 
-  AIVariant, 
-  HeatmapTargeting, 
-  MaxTargeting,
-  RandomPlacementStrategy,
-  createHeatmap,
-  normalizeHeatmap
-};
-
-export const AI_VARIANTS = ['novice', 'medium', 'expert'] as const;
-export const ALL_AI_VARIANTS = [...AI_VARIANTS, ...Object.keys(EXPERIMENTS)] as const;
-export type AIVariants = (typeof ALL_AI_VARIANTS)[number];
-
-const getRandomMove = (board: Board, ship: string): Move => {
-  const validMoves: Move[] = [];
-
-  for (let x = 0; x < BOARD_SIZE; x += 1) {
-    for (let y = 0; y < BOARD_SIZE; y += 1) {
-      if (board.canTargetCell(x, y, ship)) {
-        validMoves.push({ x, y, ship });
-      }
-    }
-  }
-
-  if (validMoves.length > 0) {
-    return validMoves[Math.floor(Math.random() * validMoves.length)];
-  }
-
-  return { x: 0, y: 0, ship };
-};
+/**
+ * EXPERIMENTAL AI REGISTRY
+ * 
+ * To add a new experimental AI:
+ * 1. Define your HeatmapStrategy class.
+ * 2. Define your AIVariant class.
+ * 3. Add an entry to the EXPERIMENTS object.
+ * 
+ * It will immediately be available in sim.ts via the name you give it here.
+ */
 
 class FlatHeatmap implements HeatmapStrategy {
   generate(board: Board, activeShipNames: string[]): RawHeatmapResult {
@@ -120,14 +79,37 @@ class FlatHeatmap implements HeatmapStrategy {
   }
 }
 
-class MediumHeatmap implements HeatmapStrategy {
+class LegacyHeatmap1 implements HeatmapStrategy {
   generate(board: Board, activeShipNames: string[]): RawHeatmapResult {
     const rawHeatmap = createHeatmap(0);
     const unsunkHits = getUnsunkHits(board);
     let maxVal = 0;
 
-    [getLargestShip(activeShipNames)].forEach((shipName) => {
+    const maxActiveSize =
+      activeShipNames.length > 0 ? Math.max(...activeShipNames.map(getShipSize)) : 0;
+
+    let maxCapacity = 0;
+
+    if (unsunkHits.size > 0) {
+      unsunkHits.forEach((hitCoord) => {
+        const [hx, hy] = fromCoord(hitCoord);
+        maxCapacity = Math.max(maxCapacity, maxRunThrough(board, hx, hy));
+      });
+    }
+
+    let assumedWoundedShipName: string | null = null;
+
+    if (unsunkHits.size > 0) {
+      const activeShipsSorted = [...activeShipNames].sort((a, b) => getShipSize(b) - getShipSize(a));
+      assumedWoundedShipName =
+        activeShipsSorted.find((shipName) => getShipSize(shipName) <= maxCapacity) ??
+        activeShipsSorted[activeShipsSorted.length - 1] ??
+        null;
+    }
+
+    activeShipNames.forEach((shipName) => {
       const size = getShipSize(shipName);
+      const baseThreat = size === maxActiveSize ? size * size : 1;
 
       for (let y = 0; y < BOARD_SIZE; y += 1) {
         for (let x = 0; x < BOARD_SIZE; x += 1) {
@@ -154,12 +136,16 @@ class MediumHeatmap implements HeatmapStrategy {
 
             if (!valid) continue;
 
-            const weight = 4 ** overlaps;
+            const isGhost = overlaps === 0 && shipName === assumedWoundedShipName;
 
-            for (const coord of cells) {
-              const [cx, cy] = fromCoord(coord);
-              rawHeatmap[cx][cy] += weight;
-              maxVal = Math.max(maxVal, rawHeatmap[cx][cy]);
+            if (!isGhost) {
+              const weight = baseThreat * 4 ** overlaps;
+
+              for (const coord of cells) {
+                const [cx, cy] = fromCoord(coord);
+                rawHeatmap[cx][cy] += weight;
+                maxVal = Math.max(maxVal, rawHeatmap[cx][cy]);
+              }
             }
           }
         }
@@ -170,7 +156,17 @@ class MediumHeatmap implements HeatmapStrategy {
   }
 }
 
-class ExpertHeatmap implements HeatmapStrategy {
+class LegacyAI1 extends AIVariant {
+  protected readonly heatmapStrategy = new LegacyHeatmap1();
+
+  private readonly targeting = new HeatmapTargeting(true, true);
+
+  selectMove(enemyBoard: Board, myActiveShips: string[]): Move {
+    return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy);
+  }
+}
+
+class Big1Heatmap implements HeatmapStrategy {
   generate(board: Board, activeShipNames: string[]): RawHeatmapResult {
     const rawHeatmap = createHeatmap(0);
     const unsunkHits = getUnsunkHits(board);
@@ -225,7 +221,7 @@ class ExpertHeatmap implements HeatmapStrategy {
                 threat = threatMultiplier * 4 ** overlaps;
               }
             } else if (!isScoutingRedundant) {
-              threat = threatMultiplier;
+              threat = 1;
             }
 
             if (threat > 0) {
@@ -244,29 +240,8 @@ class ExpertHeatmap implements HeatmapStrategy {
   }
 }
 
-class NoviceAI extends AIVariant {
-  protected readonly heatmapStrategy = new FlatHeatmap();
-
-  private readonly targeting = new MaxTargeting(true);
-
-  selectMove(enemyBoard: Board, myActiveShips: string[]): Move {
-    return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy);
-  }
-}
-
-class MediumAI extends AIVariant {
-  protected readonly heatmapStrategy = new MediumHeatmap();
-
-  private readonly targeting = new HeatmapTargeting(false, false);
-
-  selectMove(enemyBoard: Board, myActiveShips: string[]): Move {
-    return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy);
-  }
-}
-
-class ExpertAI extends AIVariant {
-  protected readonly heatmapStrategy = new ExpertHeatmap();
-
+class Big2AI extends AIVariant {
+  protected readonly heatmapStrategy = new Big1Heatmap();
   private readonly targeting = new HeatmapTargeting(false, true);
 
   selectMove(enemyBoard: Board, myActiveShips: string[]): Move {
@@ -274,44 +249,7 @@ class ExpertAI extends AIVariant {
   }
 }
 
-
-export class AI {
-  private readonly variant: AIVariant;
-
-  constructor(variant: AIVariants = 'expert') {
-    if (EXPERIMENTS[variant]) {
-      this.variant = EXPERIMENTS[variant];
-      return;
-    }
-
-    switch (variant) {
-      case 'novice':
-        this.variant = new NoviceAI();
-        break;
-      case 'medium':
-        this.variant = new MediumAI();
-        break;
-      case 'expert':
-        this.variant = new ExpertAI();
-        break;
-      default:
-        this.variant = new ExpertAI();
-        break;
-    }
-  }
-
-  getHeatmap(board: Board, activeShipNames: string[] = board.getActiveShipNames()): HeatmapResult {
-    return this.variant.getHeatmap(board, activeShipNames);
-  }
-
-  placeFleet(shipTypes: ShipDefinition[] = SHIP_TYPES): Board {
-    return this.variant.placeFleet(shipTypes);
-  }
-
-  selectMove(enemyBoard: Board, myActiveShips: string[]): Move {
-    return this.variant.selectMove(enemyBoard, myActiveShips);
-  }
-}
-
-export const placeFleetRandomly = (shipTypes: ShipDefinition[] = SHIP_TYPES): Board =>
-  new RandomPlacementStrategy().placeFleet(shipTypes);
+export const EXPERIMENTS: Record<string, AIVariant> = {
+  legacy1: new LegacyAI1(),
+  big2: new Big2AI(),
+};

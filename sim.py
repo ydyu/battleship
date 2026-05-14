@@ -116,8 +116,8 @@ class SimulationHarness:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Tactical Battleship Simulation Harness')
     parser.add_argument('--iter', type=int, default=100, help='Number of iterations (default: 100)')
-    parser.add_argument('--sideA', type=str, default='expert', choices=['novice', 'medium', 'expert', 'experiment'], help='AI for Side A')
-    parser.add_argument('--sideB', type=str, default='expert', choices=['novice', 'medium', 'expert', 'experiment'], help='AI for Side B')
+    parser.add_argument('--sideA', type=str, default='expert', choices=['novice', 'medium', 'expert'], help='AI for Side A')
+    parser.add_argument('--sideB', type=str, default='expert', choices=['novice', 'medium', 'expert'], help='AI for Side B')
     
     args = parser.parse_args()
     
