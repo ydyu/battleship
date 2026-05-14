@@ -31,6 +31,35 @@ const buildMiniIcons = (shotPatterns) =>
 
 const MINI_ICONS = buildMiniIcons(SHOT_PATTERNS);
 
+// Renders a ship as a CSS dot-grid inside a fixed 11×11px slot.
+// Used for weapon icon, sunk icon, and fleet alive icons (DRY).
+const renderShipIcon = (ship, color) => {
+  const icon = MINI_ICONS[ship];
+  const slotStyle = { display: 'inline-flex', justifyContent: 'center', alignItems: 'center', width: '11px', height: '11px', flexShrink: 0 };
+  if (!icon) return <span style={slotStyle} />;
+  const { cols, rows, active } = icon;
+  return (
+    <span style={slotStyle}>
+      <span style={{ display: 'inline-grid', gridTemplateColumns: `repeat(${cols}, 3px)`, gap: '1px' }}>
+        {Array.from({ length: cols * rows }, (_, i) =>
+          active.includes(i)
+            ? <span key={i} style={{ width: '3px', height: '3px', borderRadius: '1px', background: color }} />
+            : <span key={i} style={{ width: '3px', height: '3px' }} />
+        )}
+      </span>
+    </span>
+  );
+};
+
+const fmtStats = (stats) => {
+  if (!stats || stats.roundsWithShots === 0) return { hitPct: '—', mapPct: '—', avgRd: '—' };
+  return {
+    hitPct: Math.round(stats.roundsWithHits / stats.roundsWithShots * 100) + '%',
+    mapPct: Math.round(stats.exploredCells / stats.boardSize * 100) + '%',
+    avgRd: (stats.totalHits / stats.roundsWithShots).toFixed(2),
+  };
+};
+
 // ==========================================
 // 2. SFX SYNTHESIZER (Web Audio API)
 // ==========================================
@@ -554,7 +583,7 @@ const CombatFeed = ({
   phase, turn, winner, isScrubbing, displayLog, 
   isFeedExpanded, setIsFeedExpanded, maxRound, currentRound, 
   handleSliderChange, logContainerRef, roundKeys, logsByRound, handleRoundTap,
-  onReturnToPresent
+  onReturnToPresent, showDebug, roundDebugRows, roundCumStats, roundBoardStates, fmtStats
 }) => {
   return (
     <div className="w-full max-w-5xl mb-4 relative z-50">
@@ -626,25 +655,77 @@ const CombatFeed = ({
                     onClick={() => handleRoundTap(roundNum)}
                     className={`text-left px-3 py-2.5 transition-colors border-l-2 mb-0.5 rounded-r hover:bg-white/5 flex flex-col gap-1.5 ${bgClass}`}
                   >
-                    <div className={`text-[9px] sm:text-[10px] font-black tracking-widest uppercase flex items-center gap-2 ${isCurrentRound ? 'text-indigo-300' : 'text-slate-500'}`}>
-                      {roundNum === 0 ? 'Deployment Phase' : `Round ${roundNum}`}
-                      {isCurrentRound && <FastForward className="w-3 h-3 rotate-180" />}
-                    </div>
+                    {showDebug && roundDebugRows && roundDebugRows[roundNum] ? (
+                       (() => {
+                         const dbg = roundDebugRows[roundNum];
+                         const stats = roundCumStats?.[roundNum];
+                         const boards = roundBoardStates?.[roundNum];
 
-                    {logs.map(log => (
-                       <div key={log.id} className={`flex items-start gap-2 font-mono text-xs sm:text-sm
-                          ${log.type === 'success' ? 'text-emerald-400' :
-                            log.type === 'danger' ? 'text-red-400' :
-                            log.type === 'miss' ? 'text-slate-400' :
-                            'text-slate-300'
-                          }
-                       `}>
-                         <span className="opacity-50 text-[10px] mt-0.5 shrink-0 w-8">
-                           [{String(log.id).padStart(3, '0')}]
-                         </span>
-                         <span>{log.text}</span>
-                       </div>
-                    ))}
+                         const renderSide = (sideKey, sideColor, aliveList) => {
+                           const action = dbg[sideKey];
+                           if (!action) return null;
+                           const fmt = fmtStats(stats?.[sideKey]);
+                           const isZero = action.hits === 0;
+                           const sunkShip = action.sunkShips?.[0] ?? null;
+                           return (
+                             <>
+                               <div style={{ display: 'flex', alignItems: 'center', gap: '4px', alignSelf: 'center' }}>
+                                 {renderShipIcon(action.ship, '#64748b')}
+                                 <span style={{ fontSize: '11px', fontWeight: 500, color: sideColor }}>{action.ship}</span>
+                               </div>
+                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '2px', alignSelf: 'center', fontFamily: 'ui-monospace,monospace', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: isZero ? '#94a3b8' : sideColor }}>
+                                 {sunkShip && renderShipIcon(sunkShip, '#94a3b8')}
+                                 {!isZero && <span>💥</span>}
+                                 <span>{action.coordCount ? `${action.hits}/${action.coordCount}` : '—'}</span>
+                               </div>
+                               <div style={{ fontFamily: 'ui-monospace,monospace', fontSize: '11px', textAlign: 'right', alignSelf: 'center', color: '#94a3b8' }}>{fmt.hitPct}</div>
+                               <div style={{ fontFamily: 'ui-monospace,monospace', fontSize: '11px', textAlign: 'right', alignSelf: 'center', color: '#94a3b8' }}>{fmt.mapPct}</div>
+                               <div style={{ fontFamily: 'ui-monospace,monospace', fontSize: '11px', textAlign: 'right', alignSelf: 'center', color: '#94a3b8' }}>{fmt.avgRd}</div>
+                               <div style={{ display: 'flex', alignItems: 'center', gap: '2px', alignSelf: 'center' }}>
+                                 {SHIPS.map(s => <React.Fragment key={s.name}>{renderShipIcon(s.name, aliveList?.includes(s.name) ? sideColor : '#475569')}</React.Fragment>)}
+                               </div>
+                             </>
+                           );
+                         };
+
+                         return (
+                           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto auto auto', columnGap: '10px', rowGap: '1px' }}>
+                             <div className={`text-[9px] sm:text-[10px] font-black tracking-widest uppercase flex items-center gap-1.5 self-end pb-px ${isCurrentRound ? 'text-indigo-300' : 'text-slate-500'}`}>
+                               {roundNum === 0 ? 'Deployment Phase' : `Round ${roundNum}`}
+                               {isCurrentRound && <FastForward className="w-3 h-3 rotate-180" />}
+                             </div>
+                             {['Hits','Hit%','Map%','Avg/Rd'].map(h => (
+                               <div key={h} className="text-[9px] font-bold uppercase tracking-wider text-slate-600 text-right self-end pb-px whitespace-nowrap">{h}</div>
+                             ))}
+                             <div className="text-[9px] font-bold uppercase tracking-wider text-slate-600 self-end pb-px whitespace-nowrap">Fleet</div>
+                             <div style={{ gridColumn: '1/-1', height: '1px', background: 'rgba(255,255,255,0.05)', margin: '1px 0' }} />
+                             {renderSide('player', '#34d399', boards?.playerAlive)}
+                             {renderSide('ai', '#f87171', boards?.aiAlive)}
+                           </div>
+                         );
+                       })()
+                    ) : (
+                      <>
+                        <div className={`text-[9px] sm:text-[10px] font-black tracking-widest uppercase flex items-center gap-2 ${isCurrentRound ? 'text-indigo-300' : 'text-slate-500'}`}>
+                          {roundNum === 0 ? 'Deployment Phase' : `Round ${roundNum}`}
+                          {isCurrentRound && <FastForward className="w-3 h-3 rotate-180" />}
+                        </div>
+                        {logs.map(log => (
+                           <div key={log.id} className={`flex items-start gap-2 font-mono text-xs sm:text-sm
+                              ${log.type === 'success' ? 'text-emerald-400' :
+                                log.type === 'danger' ? 'text-red-400' :
+                                log.type === 'miss' ? 'text-slate-400' :
+                                'text-slate-300'
+                              }
+                           `}>
+                             <span className="opacity-50 text-[10px] mt-0.5 shrink-0 w-8">
+                               [{String(log.id).padStart(3, '0')}]
+                             </span>
+                             <span>{log.text}</span>
+                           </div>
+                        ))}
+                      </>
+                    )}
                   </button>
                 );
               })}
@@ -815,6 +896,52 @@ export default function App() {
   }, [tick]);
 
   const roundKeys = useMemo(() => Object.keys(logsByRound).map(Number).sort((a, b) => b - a), [logsByRound]);
+
+  const roundLastEventIdx = useMemo(() => {
+    const map = {};
+    displayEvents.forEach((ev, idx) => { if (ev.round != null) map[ev.round] = idx; });
+    return map;
+  }, [tick]);
+
+  const roundDebugRows = useMemo(() => {
+    const rows = {};
+    for (const ev of displayEvents) {
+      const r = ev.round;
+      if (r == null) continue;
+      if (!rows[r]) rows[r] = { player: null, ai: null };
+      const side = ev.actorId === 'player' ? 'player' : 'ai';
+      if (ev.kind === 'attack') {
+        rows[r][side] = { ship: ev.ship || '?', coordCount: ev.newShots ?? (ev.coords || []).length, hits: ev.hits || 0, sunkShips: [] };
+      } else if (ev.kind === 'sink' && rows[r][side]) {
+        rows[r][side].sunkShips.push(ev.ship || '?');
+      }
+    }
+    return rows;
+  }, [tick]);
+
+  const roundCumStats = useMemo(() => {
+    if (!matchRef.current) return {};
+    const result = {};
+    for (const [r, idx] of Object.entries(roundLastEventIdx)) {
+      result[+r] = {
+        player: matchRef.current.getSideStats('player', idx),
+        ai: matchRef.current.getSideStats('ai', idx),
+      };
+    }
+    return result;
+  }, [tick, roundLastEventIdx]);
+
+  const roundBoardStates = useMemo(() => {
+    if (!matchRef.current) return {};
+    const result = {};
+    for (const [r, idx] of Object.entries(roundLastEventIdx)) {
+      result[+r] = {
+        playerAlive: Object.keys(matchRef.current.boardAAt(+idx).activeShips),
+        aiAlive: Object.keys(matchRef.current.boardBAt(+idx).activeShips),
+      };
+    }
+    return result;
+  }, [tick, roundLastEventIdx]);
 
   useEffect(() => {
     soundEffectsEnabled = soundEnabled;
@@ -1097,6 +1224,11 @@ export default function App() {
         logsByRound={logsByRound}
         handleRoundTap={handleRoundTap}
         onReturnToPresent={() => setPlaybackIndex(events.length - 1)}
+        showDebug={showDebug}
+        roundDebugRows={roundDebugRows}
+        roundCumStats={roundCumStats}
+        roundBoardStates={roundBoardStates}
+        fmtStats={fmtStats}
       />
 
       {/* GLOBAL ACTION BUTTONS */}

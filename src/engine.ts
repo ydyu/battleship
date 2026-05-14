@@ -31,6 +31,7 @@ export interface AttackResult {
   origin: [number, number];
   impactCells: Coordinate[];
   hits: number;
+  newShots: number;
   sunkShips: string[];
 }
 
@@ -43,6 +44,7 @@ export interface BattleLogEvent {
   origin?: [number, number];
   coords: Coordinate[];
   hits?: number;
+  newShots?: number;
   shipCells?: Coordinate[];
   winnerId?: string | 'draw';
 }
@@ -51,6 +53,14 @@ export interface ReplayLogLike {
   kind?: string;
   targetId?: string | null;
   coords?: Coordinate[];
+}
+
+export interface SideStats {
+  roundsWithShots: number;
+  roundsWithHits: number;
+  totalHits: number;
+  exploredCells: number;
+  boardSize: number;
 }
 
 export interface TurnResolution {
@@ -229,8 +239,9 @@ export class Board {
       .map(([x, y]) => toCoord(x, y));
   }
 
-  applyAttack(coords: Coordinate[]): { hits: number; sunkShips: string[] } {
+  applyAttack(coords: Coordinate[]): { hits: number; newShots: number; sunkShips: string[] } {
     let hits = 0;
+    let newShots = 0;
     const sunkShips: string[] = [];
 
     coords.forEach((coord) => {
@@ -238,6 +249,7 @@ export class Board {
         return;
       }
 
+      newShots += 1;
       this.shotsFired.add(coord);
       const [x, y] = fromCoord(coord);
 
@@ -255,14 +267,14 @@ export class Board {
       }
     });
 
-    return { hits, sunkShips };
+    return { hits, newShots, sunkShips };
   }
 
   fire(startX: number, startY: number, pattern: PatternOffset[], ship: string = 'Unknown'): AttackResult {
     const impactCells = this.getImpactCoordinates(startX, startY, pattern);
-    const { hits, sunkShips } = this.applyAttack(impactCells);
+    const { hits, newShots, sunkShips } = this.applyAttack(impactCells);
 
-    return { ship, origin: [startX, startY], impactCells, hits, sunkShips };
+    return { ship, origin: [startX, startY], impactCells, hits, newShots, sunkShips };
   }
 
   private processDamage(coord: Coordinate): string | null {
@@ -303,6 +315,7 @@ const buildAttackEvents = (
       origin: attack.origin,
       coords: attack.impactCells,
       hits: attack.hits,
+      newShots: attack.newShots,
     },
   ];
 
@@ -407,6 +420,31 @@ export class BattleshipMatch {
 
   boardBAt(eventIndex: number): Board {
     return BattleshipMatch.rebuildBoardState(this.initialBoardB, this.events, eventIndex, this.sideBId);
+  }
+
+  getSideStats(sideId: string, upToEventIdx?: number): SideStats {
+    const evts = upToEventIdx !== undefined ? this.events.slice(0, upToEventIdx + 1) : this.events;
+    const explored = new Set<string>();
+    const seenRounds = new Set<number>();
+    const hitRounds = new Set<number>();
+    let totalHits = 0;
+
+    for (const ev of evts) {
+      if (ev.kind !== 'attack' || ev.actorId !== sideId) continue;
+      seenRounds.add(ev.round);
+      if ((ev.hits ?? 0) > 0) hitRounds.add(ev.round);
+      totalHits += ev.hits ?? 0;
+      for (const coord of ev.coords ?? []) explored.add(coord);
+    }
+
+    const boardSize = this.initialBoardA.size * this.initialBoardA.size;
+    return {
+      roundsWithShots: seenRounds.size,
+      roundsWithHits: hitRounds.size,
+      totalHits,
+      exploredCells: explored.size,
+      boardSize,
+    };
   }
 
   static rebuildBoardState(
