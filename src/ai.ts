@@ -18,6 +18,7 @@ import {
   remainderIsValid,
   createHeatmap,
   normalizeHeatmap,
+  RngFn,
 } from './ai-utils';
 import { 
   HeatmapResult, 
@@ -27,7 +28,8 @@ import {
   AIVariant, 
   HeatmapTargeting, 
   MaxTargeting,
-  RandomPlacementStrategy 
+  RandomPlacementStrategy,
+  AiParamSchema,
 } from './ai-base';
 import { EXPERIMENTS } from './ai-experiments';
 
@@ -36,7 +38,8 @@ export type {
   HeatmapResult, 
   RawHeatmapResult, 
   HeatmapStrategy, 
-  PlacementStrategy 
+  PlacementStrategy,
+  AiParamSchema,
 };
 export { 
   AIVariant, 
@@ -245,32 +248,38 @@ class ExpertHeatmap implements HeatmapStrategy {
 }
 
 class NoviceAI extends AIVariant {
+  static paramSchema: AiParamSchema = {};
+
   protected readonly heatmapStrategy = new FlatHeatmap();
 
   private readonly targeting = new MaxTargeting(true);
 
-  selectMove(enemyBoard: Board, myActiveShips: string[]): Move {
-    return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy);
+  selectMove(enemyBoard: Board, myActiveShips: string[], rng?: RngFn): Move {
+    return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy, rng);
   }
 }
 
 class MediumAI extends AIVariant {
+  static paramSchema: AiParamSchema = {};
+
   protected readonly heatmapStrategy = new MediumHeatmap();
 
   private readonly targeting = new HeatmapTargeting(false, false);
 
-  selectMove(enemyBoard: Board, myActiveShips: string[]): Move {
-    return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy);
+  selectMove(enemyBoard: Board, myActiveShips: string[], rng?: RngFn): Move {
+    return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy, rng);
   }
 }
 
 class ExpertAI extends AIVariant {
+  static paramSchema: AiParamSchema = {};
+
   protected readonly heatmapStrategy = new ExpertHeatmap();
 
   private readonly targeting = new HeatmapTargeting(false, true);
 
-  selectMove(enemyBoard: Board, myActiveShips: string[]): Move {
-    return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy);
+  selectMove(enemyBoard: Board, myActiveShips: string[], rng?: RngFn): Move {
+    return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy, rng);
   }
 }
 
@@ -304,14 +313,21 @@ export class AI {
     return this.variant.getHeatmap(board, activeShipNames);
   }
 
-  placeFleet(shipTypes: ShipDefinition[] = SHIP_TYPES): Board {
-    return this.variant.placeFleet(shipTypes);
+  placeFleet(shipTypes: ShipDefinition[] = SHIP_TYPES, rng?: RngFn): Board {
+    return this.variant.placeFleet(shipTypes, rng);
   }
 
-  selectMove(enemyBoard: Board, myActiveShips: string[]): Move {
-    return this.variant.selectMove(enemyBoard, myActiveShips);
+  selectMove(enemyBoard: Board, myActiveShips: string[], rng?: RngFn): Move {
+    return this.variant.selectMove(enemyBoard, myActiveShips, rng);
   }
 }
+
+export const AI_PARAM_SCHEMAS: Record<string, AiParamSchema> = {
+  novice: NoviceAI.paramSchema,
+  medium: MediumAI.paramSchema,
+  expert: ExpertAI.paramSchema,
+  ...Object.fromEntries(Object.keys(EXPERIMENTS).map((k) => [k, {}])),
+};
 
 export const placeFleetRandomly = (shipTypes: ShipDefinition[] = SHIP_TYPES): Board =>
   new RandomPlacementStrategy().placeFleet(shipTypes);

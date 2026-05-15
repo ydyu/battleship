@@ -4,8 +4,16 @@ import {
   getLargestShip, 
   getUnsunkHits, 
   normalizeHeatmap, 
-  createHeatmap 
+  createHeatmap,
+  RngFn,
 } from './ai-utils';
+
+export interface AiParamDef {
+  type: 'number' | 'boolean';
+  default: number | boolean;
+  description: string;
+}
+export type AiParamSchema = Record<string, AiParamDef>;
 
 export interface HeatmapResult {
   heatmap: number[][];
@@ -23,20 +31,21 @@ export interface HeatmapStrategy {
 }
 
 export interface PlacementStrategy {
-  placeFleet(shipTypes?: ShipDefinition[]): Board;
+  placeFleet(shipTypes?: ShipDefinition[], rng?: RngFn): Board;
 }
 
 export class RandomPlacementStrategy implements PlacementStrategy {
-  placeFleet(shipTypes: ShipDefinition[] = SHIP_TYPES): Board {
+  placeFleet(shipTypes: ShipDefinition[] = SHIP_TYPES, rng?: RngFn): Board {
+    const random = rng ?? Math.random;
     const board = new Board();
 
     shipTypes.forEach((ship) => {
       let placed = false;
 
       while (!placed) {
-        const x = Math.floor(Math.random() * board.size);
-        const y = Math.floor(Math.random() * board.size);
-        const orientation = Math.random() > 0.5 ? 'horizontal' : 'vertical';
+        const x = Math.floor(random() * board.size);
+        const y = Math.floor(random() * board.size);
+        const orientation = random() > 0.5 ? 'horizontal' : 'vertical';
         placed = board.placeShip(ship.name, x, y, orientation);
       }
     });
@@ -51,7 +60,7 @@ export class HeatmapTargeting {
     private readonly testAllShips: boolean,
   ) {}
 
-  selectMove(enemyBoard: Board, myActiveShips: string[], heatmapStrategy: HeatmapStrategy): Move {
+  selectMove(enemyBoard: Board, myActiveShips: string[], heatmapStrategy: HeatmapStrategy, rng?: RngFn): Move {
     const activeEnemyShipNames = enemyBoard.getActiveShipNames();
     const { rawHeatmap } = heatmapStrategy.generate(enemyBoard, activeEnemyShipNames);
     const shipsToTest = this.testAllShips ? myActiveShips : [getLargestShip(myActiveShips)];
@@ -96,13 +105,11 @@ export class HeatmapTargeting {
       }
     });
 
+    const random = rng ?? Math.random;
     if (globalBestMoves.length > 0) {
-      return globalBestMoves[Math.floor(Math.random() * globalBestMoves.length)];
+      return globalBestMoves[Math.floor(random() * globalBestMoves.length)];
     }
 
-    // Fallback: This is locally defined in ai.ts currently, but we can't easily import it back without circularity.
-    // We'll use a simple random fallback here if needed, or pass it in.
-    // For now, let's keep it simple.
     return { x: 0, y: 0, ship: getLargestShip(myActiveShips) };
   }
 }
@@ -112,7 +119,7 @@ export class MaxTargeting {
     private readonly testAllShips: boolean,
   ) {}
 
-  selectMove(enemyBoard: Board, myActiveShips: string[], heatmapStrategy: HeatmapStrategy): Move {
+  selectMove(enemyBoard: Board, myActiveShips: string[], heatmapStrategy: HeatmapStrategy, rng?: RngFn): Move {
     const activeEnemyShipNames = enemyBoard.getActiveShipNames();
     const { rawHeatmap, maxVal } = heatmapStrategy.generate(enemyBoard, activeEnemyShipNames);
     const shipsToTest = this.testAllShips ? myActiveShips : [getLargestShip(myActiveShips)];
@@ -153,8 +160,9 @@ export class MaxTargeting {
       }
     });
 
+    const random = rng ?? Math.random;
     if (globalBestMoves.length > 0) {
-      return globalBestMoves[Math.floor(Math.random() * globalBestMoves.length)];
+      return globalBestMoves[Math.floor(random() * globalBestMoves.length)];
     }
 
     return { x: 0, y: 0, ship: getLargestShip(myActiveShips) };
@@ -176,9 +184,9 @@ export abstract class AIVariant {
     };
   }
 
-  placeFleet(shipTypes: ShipDefinition[] = SHIP_TYPES): Board {
-    return this.placementStrategy.placeFleet(shipTypes);
+  placeFleet(shipTypes: ShipDefinition[] = SHIP_TYPES, rng?: RngFn): Board {
+    return this.placementStrategy.placeFleet(shipTypes, rng);
   }
 
-  abstract selectMove(enemyBoard: Board, myActiveShips: string[]): Move;
+  abstract selectMove(enemyBoard: Board, myActiveShips: string[], rng?: RngFn): Move;
 }

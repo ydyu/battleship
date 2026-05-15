@@ -15,6 +15,7 @@ import {
   getLargestShip,
   getSaturationCount,
   remainderIsValid,
+  RngFn,
 } from './ai-utils';
 
 /**
@@ -161,8 +162,8 @@ class LegacyAI1 extends AIVariant {
 
   private readonly targeting = new HeatmapTargeting(true, true);
 
-  selectMove(enemyBoard: Board, myActiveShips: string[]): Move {
-    return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy);
+  selectMove(enemyBoard: Board, myActiveShips: string[], rng?: RngFn): Move {
+    return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy, rng);
   }
 }
 
@@ -244,8 +245,8 @@ class Big2AI extends AIVariant {
   protected readonly heatmapStrategy = new Big1Heatmap();
   private readonly targeting = new HeatmapTargeting(false, true);
 
-  selectMove(enemyBoard: Board, myActiveShips: string[]): Move {
-    return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy);
+  selectMove(enemyBoard: Board, myActiveShips: string[], rng?: RngFn): Move {
+    return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy, rng);
   }
 }
 

@@ -1,5 +1,17 @@
 import { BOARD_SIZE, Board, SHIP_INDEX, SHIP_NAMES } from './engine';
 
+export type RngFn = () => number;
+
+export const mulberry32 = (seed: number): RngFn => {
+  let s = seed >>> 0;
+  return () => {
+    s += 0x6D2B79F5;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+    return ((t ^ (t >>> 14)) >>> 0) / 2 ** 32;
+  };
+};
+
 export const getShipSize = (shipName: string): number => SHIP_INDEX[shipName]?.size ?? 0;
 
 export const getUnsunkHits = (board: Board): Set<string> =>
