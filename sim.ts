@@ -1,5 +1,5 @@
 import { AI, ALL_AI_VARIANTS, AI_PARAM_SCHEMAS, type AIVariants } from './src/ai';
-import { BattleshipMatch } from './src/engine';
+import { BattleshipMatch, Board, SHIP_TYPES } from './src/engine';
 import { mulberry32, type RngFn } from './src/ai-utils';
 
 const VALID_VARIANTS = ALL_AI_VARIANTS;
@@ -15,6 +15,40 @@ const parseVars = (raw: string): Record<string, string> => {
   );
 };
 
+const isVariant = (value: string): value is AIVariants => (VALID_VARIANTS as readonly string[]).includes(value);
+
+const printHelp = () => {
+  const variants = VALID_VARIANTS.join('|');
+  console.log([
+    'Usage: npx tsx sim.ts [options]',
+    '',
+    'Options:',
+    `  --sideA <variant>        AI for side A (default: expert) [${variants}]`,
+    `  --sideB <variant>        AI for side B (default: expert)`,
+    '  --games <n>             Number of games to simulate (default: 1)',
+    '  --verbose               Print round-by-round detail',
+    '',
+    '  --seed <n>              Seed entire run; game i uses fleet=n+i*2, move=n+i*2+1',
+    '  --fleet-seed <n>        Fix both sides to same fleet positions every game (intentional',
+    '                          asymmetry: A draws first half of RNG, B draws second half)',
+    '  --move-seed <n>         Fix move tie-breaking RNG every game',
+    '  --game <i>              Replay game index i from a seeded run (requires --seed)',
+    '  --mirror                Give both sides identical fleets + move RNG (use with --fleet-seed',
+    '                          to eliminate layout luck; produces all-draws with identical AIs)',
+    '',
+    '  --varsA key=val,...     Override AI params for side A',
+    '  --varsB key=val,...     Override AI params for side B',
+    '  --list-vars [variant]   Print param schema for a variant (or all) and exit',
+    '',
+    'Examples:',
+    '  npx tsx sim.ts --sideA expert --sideB expert --games 200 --seed 42',
+    '  npx tsx sim.ts --fleet-seed 0 --games 200               # test fleet position A vs B',
+    '  npx tsx sim.ts --fleet-seed 0 --mirror --games 200      # isolate AI quality (all draws with identical AIs)',
+    '  npx tsx sim.ts --seed 42 --game 7 --sideA expert --sideB expert --mirror',
+    '  npx tsx sim.ts --list-vars expert',
+  ].join('\n'));
+};
+
 const parseArgs = () => {
   const options = {
     sideA: 'expert',
@@ -25,6 +59,7 @@ const parseArgs = () => {
     fleetSeed: undefined as number | undefined,
     moveSeed: undefined as number | undefined,
     game: undefined as number | undefined,
+    mirror: false,
     varsA: {} as Record<string, string>,
     varsB: {} as Record<string, string>,
     listVars: undefined as string | undefined,
@@ -43,15 +78,31 @@ const parseArgs = () => {
     else if (arg === '--fleet-seed') { options.fleetSeed = Number(args[i + 1]); i += 1; }
     else if (arg === '--move-seed') { options.moveSeed = Number(args[i + 1]); i += 1; }
     else if (arg === '--game') { options.game = Number(args[i + 1]); i += 1; }
+    else if (arg === '--mirror') { options.mirror = true; }
     else if (arg === '--varsA') { options.varsA = parseVars(args[i + 1] ?? ''); i += 1; }
     else if (arg === '--varsB') { options.varsB = parseVars(args[i + 1] ?? ''); i += 1; }
-    else if (arg === '--list-vars') { options.listVars = args[i + 1]; i += 1; }
+    else if (arg === '--help' || arg === '-h') {
+      printHelp();
+      process.exit(0);
+    }
+    else if (arg === '--list-vars') {
+      const next = args[i + 1];
+      if (next === undefined || next.startsWith('--')) {
+        options.listVars = ''; // show all variants
+      } else {
+        options.listVars = next;
+        i += 1;
+      }
+    }
+    else if (arg.startsWith('-')) {
+      console.error(`Error: Unknown flag '${arg}'.\n`);
+      printHelp();
+      process.exit(1);
+    }
   }
 
   return options;
 };
-
-const isVariant = (value: string): value is AIVariants => (VALID_VARIANTS as readonly string[]).includes(value);
 
 const validateVars = (
   vars: Record<string, string>,
@@ -63,8 +114,9 @@ const validateVars = (
 
   for (const [key, val] of Object.entries(vars)) {
     if (!(key in schema)) {
-      console.error(`Error: Unknown parameter '${key}' for ${side} variant '${variant}'.`);
-      console.error(`  Hint: run \`npx tsx sim.ts --list-vars ${variant}\` to see valid parameters.`);
+      console.error(`Error: Unknown parameter '${key}' for ${side} variant '${variant}'.\n`);
+      console.error(`Parameters for ${variant}:`);
+      printSchema(variant);
       return null;
     }
     const def = schema[key];
@@ -83,20 +135,51 @@ const validateVars = (
   return result;
 };
 
+const printFleet = (side: string, board: Board) => {
+  console.log(`  ${side} fleet:`);
+  for (const { name } of SHIP_TYPES) {
+    const coords = board.shipLayouts[name];
+    if (!coords) continue;
+    const cells = coords.map((c) => `(${c})`).join(' ');
+    console.log(`    ${name.padEnd(12)} ${cells}`);
+  }
+};
+
+const printSchema = (variant: string) => {
+  const schema = AI_PARAM_SCHEMAS[variant] ?? {};
+  const entries = Object.entries(schema);
+  if (entries.length === 0) {
+    console.log(`  (no tunable parameters)`);
+  } else {
+    for (const [key, def] of entries) {
+      console.log(`  ${key.padEnd(14)}${def.type.padEnd(9)}default=${def.default}   ${def.description}`);
+    }
+  }
+};
+
+
 const runMatch = (
   sideAVariant: AIVariants,
   sideBVariant: AIVariants,
   verbose: boolean,
-  rngFleet?: RngFn,
-  rngMove?: RngFn,
+  rngFleetA?: RngFn,
+  rngFleetB?: RngFn,
+  rngMoveA?: RngFn,
+  rngMoveB?: RngFn,
+  configA?: Record<string, number | boolean>,
+  configB?: Record<string, number | boolean>,
+  preplacedA?: Board,
+  preplacedB?: Board,
 ) => {
-  const sideA = new AI(sideAVariant);
-  const sideB = new AI(sideBVariant);
-  const match = new BattleshipMatch(sideA.placeFleet(undefined, rngFleet), sideB.placeFleet(undefined, rngFleet), 'sideA', 'sideB');
+  const sideA = new AI(sideAVariant, configA);
+  const sideB = new AI(sideBVariant, configB);
+  const fleetA = preplacedA ?? sideA.placeFleet(undefined, rngFleetA);
+  const fleetB = preplacedB ?? sideB.placeFleet(undefined, rngFleetB);
+  const match = new BattleshipMatch(fleetA, fleetB, 'sideA', 'sideB');
 
   while (!match.isGameOver) {
-    const moveA = sideA.selectMove(match.boardB, match.boardA.getActiveShipNames(), rngMove);
-    const moveB = sideB.selectMove(match.boardA, match.boardB.getActiveShipNames(), rngMove);
+    const moveA = sideA.selectMove(match.boardB, match.boardA.getActiveShipNames(), rngMoveA);
+    const moveB = sideB.selectMove(match.boardA, match.boardB.getActiveShipNames(), rngMoveB);
     const result = match.resolveTurn(moveA, moveB);
 
     if (verbose) {
@@ -111,27 +194,34 @@ const runMatch = (
 };
 
 const main = () => {
-  const { sideA, sideB, games, verbose, seed, fleetSeed, moveSeed, game, varsA, varsB, listVars } = parseArgs();
+  const { sideA, sideB, games, verbose, seed, fleetSeed, moveSeed, game, mirror, varsA, varsB, listVars } = parseArgs();
 
   if (listVars !== undefined) {
-    if (!isVariant(listVars)) {
+    if (listVars === '' || listVars === undefined) {
+      // No variant specified — show all
+      for (const variant of VALID_VARIANTS) {
+        console.log(`Parameters for ${variant}:`);
+        printSchema(variant);
+      }
+    } else if (!isVariant(listVars)) {
       const variants = VALID_VARIANTS.join('|');
-      console.error(`Error: Unknown variant '${listVars}'. Valid variants: ${variants}`);
+      console.error(`Error: Unknown variant '${listVars}'. Valid variants: ${variants}\n`);
+      printHelp();
       process.exit(1);
-    }
-    const schema = AI_PARAM_SCHEMAS[listVars] ?? {};
-    console.log(`Parameters for ${listVars}:`);
-    for (const [key, def] of Object.entries(schema)) {
-      console.log(`  ${key.padEnd(14)}${def.type.padEnd(9)}default=${def.default}   ${def.description}`);
+    } else {
+      console.log(`Parameters for ${listVars}:`);
+      printSchema(listVars);
     }
     process.exit(0);
   }
 
   if (!isVariant(sideA) || !isVariant(sideB) || !Number.isInteger(games) || games < 1) {
     const variants = VALID_VARIANTS.join('|');
-    console.error(
-      `Usage: npm run sim -- --sideA <${variants}> --sideB <${variants}> --games <positive-int> [--verbose]`,
-    );
+    if (!isVariant(sideA)) console.error(`Error: Unknown --sideA variant '${sideA}'. Valid: ${variants}`);
+    if (!isVariant(sideB)) console.error(`Error: Unknown --sideB variant '${sideB}'. Valid: ${variants}`);
+    if (!Number.isInteger(games) || games < 1) console.error(`Error: --games must be a positive integer, got '${games}'.`);
+    console.error('');
+    printHelp();
     process.exit(1);
   }
 
@@ -145,20 +235,36 @@ const main = () => {
 
   if (replayMode) {
     if (seed === undefined) {
-      console.error('Error: --game requires --seed');
+      console.error('Error: --game requires --seed\n');
+      printHelp();
       process.exit(1);
     }
     const i = game!;
     const effectiveFleetSeed = fleetSeed ?? seed + i * 2;
     const effectiveMoveSeed = moveSeed ?? seed + i * 2 + 1;
+    const aiA = new AI(sideA, parsedVarsA);
+    const aiB = new AI(sideB, parsedVarsB);
+    const rngFleetA = mulberry32(effectiveFleetSeed);
+    const rngFleetB = mirror ? mulberry32(effectiveFleetSeed) : rngFleetA;
+    const fleetA = aiA.placeFleet(undefined, rngFleetA);
+    const fleetB = aiB.placeFleet(undefined, rngFleetB);
     console.log(`Replaying game ${i} (seed=${seed}, fleetSeed=${effectiveFleetSeed}, moveSeed=${effectiveMoveSeed})`);
-    console.log(`${sideA} (A) vs ${sideB} (B)`);
+    console.log(`${sideA} (A) vs ${sideB} (B)${mirror ? ' [MIRRORED]' : ''}`);
+    printFleet('sideA', fleetA);
+    printFleet('sideB', fleetB);
+    console.log('');
     runMatch(
       sideA,
       sideB,
       true,
-      mulberry32(effectiveFleetSeed),
+      undefined,
+      undefined,
       mulberry32(effectiveMoveSeed),
+      mirror ? mulberry32(effectiveMoveSeed) : undefined,
+      parsedVarsA,
+      parsedVarsB,
+      fleetA,
+      fleetB,
     );
     return;
   }
@@ -173,20 +279,35 @@ const main = () => {
     sideB: { wins: 0, rounds: [] as number[] },
     draw: { count: 0, rounds: [] as number[] },
   };
-  type LossEntry = { game: number; rounds: number; fleetSeed: number; moveSeed: number };
+  type LossEntry = { game: number; rounds: number; fleetSeed?: number; moveSeed?: number };
   const lossesA: LossEntry[] = []; // games sideA lost (sideB won)
   const lossesB: LossEntry[] = []; // games sideB lost (sideA won)
 
   for (let i = 0; i < games; i += 1) {
     const effectiveFleetSeed = fleetSeed ?? (seed !== undefined ? seed + i * 2 : undefined);
     const effectiveMoveSeed = moveSeed ?? (seed !== undefined ? seed + i * 2 + 1 : undefined);
-    const rngFleet = effectiveFleetSeed !== undefined ? mulberry32(effectiveFleetSeed) : undefined;
-    const rngMove = effectiveMoveSeed !== undefined ? mulberry32(effectiveMoveSeed) : undefined;
 
-    const result = runMatch(sideA, sideB, verbose, rngFleet, rngMove);
+    const rngFleetA = effectiveFleetSeed !== undefined ? mulberry32(effectiveFleetSeed) : undefined;
+    const rngFleetB = (mirror && effectiveFleetSeed !== undefined) ? mulberry32(effectiveFleetSeed) : rngFleetA;
+
+    const rngMoveA = effectiveMoveSeed !== undefined ? mulberry32(effectiveMoveSeed) : undefined;
+    const rngMoveB = (mirror && effectiveMoveSeed !== undefined) ? mulberry32(effectiveMoveSeed) : rngMoveA;
+
+    const aiA = new AI(sideA, parsedVarsA ?? undefined);
+    const aiB = new AI(sideB, parsedVarsB ?? undefined);
+    const placedA = aiA.placeFleet(undefined, rngFleetA);
+    const placedB = aiB.placeFleet(undefined, rngFleetB);
+
+    if (verbose) {
+      console.log(`\n--- Game ${i} ---`);
+      printFleet('sideA', placedA);
+      printFleet('sideB', placedB);
+    }
+
+    const result = runMatch(sideA, sideB, verbose, rngFleetA, rngFleetB, rngMoveA, rngMoveB, parsedVarsA, parsedVarsB, placedA, placedB);
 
     const mkEntry = (): LossEntry | null =>
-      isSeeded && effectiveFleetSeed !== undefined && effectiveMoveSeed !== undefined
+      isSeeded
         ? { game: i, rounds: result.rounds, fleetSeed: effectiveFleetSeed, moveSeed: effectiveMoveSeed }
         : null;
 
@@ -250,8 +371,7 @@ const main = () => {
   console.log('\n' + '-'.repeat(20));
   console.log(`Global Average: ${globalAvg} rounds per game`);
 
-  if ((lossesA.length > 0 || lossesB.length > 0) && seed !== undefined) {
-    const replayBase = `npx tsx sim.ts --seed ${seed} --sideA ${sideA} --sideB ${sideB} --game`;
+  if (lossesA.length > 0 || lossesB.length > 0) {
     const pickNotable = (list: LossEntry[]): Array<[string, LossEntry]> => {
       const sorted = [...list].sort((a, b) => a.rounds - b.rounds);
       const fastest = sorted[0];
@@ -267,8 +387,16 @@ const main = () => {
     const printNotable = (heading: string, list: LossEntry[]) => {
       if (list.length === 0) return;
       console.log(`\nNotable ${heading} losses:`);
+      const fmtVars = (v: Record<string, string>) => Object.entries(v).map(([k, val]) => `${k}=${val}`).join(',');
+      const strA = Object.keys(varsA).length > 0 ? ` --varsA ${fmtVars(varsA)}` : '';
+      const strB = Object.keys(varsB).length > 0 ? ` --varsB ${fmtVars(varsB)}` : '';
+
       for (const [kind, entry] of pickNotable(list)) {
-        const replay = `npx tsx sim.ts --fleet-seed ${entry.fleetSeed} --move-seed ${entry.moveSeed} --sideA ${sideA} --sideB ${sideB} --games 1 --verbose`;
+        const seedParts: string[] = [];
+        if (entry.fleetSeed !== undefined) seedParts.push(`--fleet-seed ${entry.fleetSeed}`);
+        if (entry.moveSeed !== undefined) seedParts.push(`--move-seed ${entry.moveSeed}`);
+        const seedStr = seedParts.length > 0 ? ' ' + seedParts.join(' ') : '';
+        const replay = `npx tsx sim.ts${seedStr} --sideA ${sideA} --sideB ${sideB}${strA}${strB} --games 1 --verbose${mirror ? ' --mirror' : ''}`;
         console.log(`  ${kind}  game ${entry.game}  (${entry.rounds} rds)  →  ${replay}`);
       }
     };

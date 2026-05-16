@@ -35,6 +35,7 @@ export const getLargestShip = (activeShips: string[]): string =>
 
     return currentShip.index < largestShip.index ? shipName : largest;
   }, null) ?? SHIP_NAMES[SHIP_NAMES.length - 1];
+
 export const createHeatmap = (fill = 0): number[][] =>
   Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(fill));
 
