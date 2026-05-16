@@ -1,10 +1,14 @@
-import { AI, ALL_AI_VARIANTS, AI_PARAM_SCHEMAS, type AIVariants, parseVars, validateVars, printSchema } from './src/ai';
+import { AI } from './src/ai';
 import { BattleshipMatch, Board, SHIP_TYPES } from './src/engine';
 import { mulberry32, type RngFn } from './src/ai-utils';
-
-const VALID_VARIANTS = ALL_AI_VARIANTS;
-
-const isVariant = (value: string): value is AIVariants => (VALID_VARIANTS as readonly string[]).includes(value);
+import {
+  VALID_VARIANTS,
+  isVariant,
+  parseVars,
+  validateVars,
+  printSchema,
+  parseCommonArgs,
+} from './src/cli';
 
 const printHelp = () => {
   const variants = VALID_VARIANTS.join('|');
@@ -36,61 +40,6 @@ const printHelp = () => {
     '  npx tsx sim.ts --seed 42 --game 7 --sideA expert --sideB expert --mirror',
     '  npx tsx sim.ts --list-vars expert',
   ].join('\n'));
-};
-
-const parseArgs = () => {
-  const options = {
-    sideA: 'expert',
-    sideB: 'expert',
-    games: 1,
-    verbose: false,
-    seed: undefined as number | undefined,
-    fleetSeed: undefined as number | undefined,
-    moveSeed: undefined as number | undefined,
-    game: undefined as number | undefined,
-    mirror: false,
-    varsA: {} as Record<string, string>,
-    varsB: {} as Record<string, string>,
-    listVars: undefined as string | undefined,
-  };
-
-  const args = process.argv.slice(2);
-
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-
-    if (arg === '--sideA') { options.sideA = args[i + 1] ?? options.sideA; i += 1; }
-    else if (arg === '--sideB') { options.sideB = args[i + 1] ?? options.sideB; i += 1; }
-    else if (arg === '--games') { options.games = Number(args[i + 1] ?? options.games); i += 1; }
-    else if (arg === '--verbose') { options.verbose = true; }
-    else if (arg === '--seed') { options.seed = Number(args[i + 1]); i += 1; }
-    else if (arg === '--fleet-seed') { options.fleetSeed = Number(args[i + 1]); i += 1; }
-    else if (arg === '--move-seed') { options.moveSeed = Number(args[i + 1]); i += 1; }
-    else if (arg === '--game') { options.game = Number(args[i + 1]); i += 1; }
-    else if (arg === '--mirror') { options.mirror = true; }
-    else if (arg === '--varsA') { options.varsA = parseVars(args[i + 1] ?? ''); i += 1; }
-    else if (arg === '--varsB') { options.varsB = parseVars(args[i + 1] ?? ''); i += 1; }
-    else if (arg === '--help' || arg === '-h') {
-      printHelp();
-      process.exit(0);
-    }
-    else if (arg === '--list-vars') {
-      const next = args[i + 1];
-      if (next === undefined || next.startsWith('--')) {
-        options.listVars = ''; // show all variants
-      } else {
-        options.listVars = next;
-        i += 1;
-      }
-    }
-    else if (arg.startsWith('-')) {
-      console.error(`Error: Unknown flag '${arg}'.\n`);
-      printHelp();
-      process.exit(1);
-    }
-  }
-
-  return options;
 };
 
 const printFleet = (side: string, board: Board) => {
@@ -139,7 +88,13 @@ const runMatch = (
 };
 
 const main = () => {
-  const { sideA, sideB, games, verbose, seed, fleetSeed, moveSeed, game, mirror, varsA, varsB, listVars } = parseArgs();
+  const options = parseCommonArgs(process.argv.slice(2));
+  const { sideA, sideB, games, verbose, seed, fleetSeed, moveSeed, game, mirror, varsA, varsB, listVars, help } = options;
+
+  if (help) {
+    printHelp();
+    process.exit(0);
+  }
 
   if (listVars !== undefined) {
     if (listVars === '' || listVars === undefined) {

@@ -1,148 +1,25 @@
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { AI, ALL_AI_VARIANTS, type AIVariants, placeFleetRandomly, parseVars, validateVars, printSchema } from './src/ai';
-import { BOARD_SIZE, Board, SHIP_INDEX, SHIP_NAMES, SHOT_PATTERNS, BattleshipMatch } from './src/engine';
+import { AI, placeFleetRandomly } from './src/ai';
+import { Board, SHIP_NAMES, BattleshipMatch, SHOT_PATTERNS } from './src/engine';
 import { mulberry32 } from './src/ai-utils';
-
-const VALID_VARIANTS = ALL_AI_VARIANTS;
-const COLUMN_LABELS = Array.from({ length: BOARD_SIZE }, (_, index) => String.fromCharCode(65 + index));
-
-const sortShipsForPrompt = (shipNames: string[]) =>
-  [...shipNames].sort((a, b) => {
-    const sizeDelta = (SHIP_INDEX[b]?.size ?? 0) - (SHIP_INDEX[a]?.size ?? 0);
-    if (sizeDelta !== 0) return sizeDelta;
-    return (SHIP_INDEX[a]?.index ?? 0) - (SHIP_INDEX[b]?.index ?? 0);
-  });
-
-const PROMPT_SHIP_ORDER = sortShipsForPrompt(SHIP_NAMES);
-const DISPLAY_SHIP_SYMBOLS = Object.fromEntries(
-  PROMPT_SHIP_ORDER.map((shipName, index) => [shipName, String.fromCharCode(90 - index)]),
-);
-
-const parseArgs = () => {
-  const options = {
-    ai: 'expert' as string,
-    help: false,
-    watch: false,
-    sideA: 'expert' as string,
-    sideB: 'expert' as string,
-    fleetSeed: undefined as number | undefined,
-    moveSeed: undefined as number | undefined,
-    seed: undefined as number | undefined,
-    game: undefined as number | undefined,
-    mirror: false,
-    auto: false,
-    watchFlagsUsed: false,
-    vars: {} as Record<string, string>,
-    varsA: {} as Record<string, string>,
-    varsB: {} as Record<string, string>,
-  };
-
-  const args = process.argv.slice(2);
-
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-    if (arg === '--ai') { options.ai = args[i + 1] ?? options.ai; i += 1; }
-    else if (arg === '--help' || arg === '-h') options.help = true;
-    else if (arg === '--watch') options.watch = true;
-    else if (arg === '--sideA') { options.sideA = args[i + 1] ?? options.sideA; options.watchFlagsUsed = true; i += 1; }
-    else if (arg === '--sideB') { options.sideB = args[i + 1] ?? options.sideB; options.watchFlagsUsed = true; i += 1; }
-    else if (arg === '--vars') { options.vars = parseVars(args[i + 1] ?? ''); i += 1; }
-    else if (arg === '--varsA') { options.varsA = parseVars(args[i + 1] ?? ''); options.watchFlagsUsed = true; i += 1; }
-    else if (arg === '--varsB') { options.varsB = parseVars(args[i + 1] ?? ''); options.watchFlagsUsed = true; i += 1; }
-    else if (arg === '--fleet-seed') { options.fleetSeed = Number(args[i + 1]); options.watchFlagsUsed = true; i += 1; }
-    else if (arg === '--move-seed') { options.moveSeed = Number(args[i + 1]); options.watchFlagsUsed = true; i += 1; }
-    else if (arg === '--seed') { options.seed = Number(args[i + 1]); options.watchFlagsUsed = true; i += 1; }
-    else if (arg === '--game') { options.game = Number(args[i + 1]); options.watchFlagsUsed = true; i += 1; }
-    else if (arg === '--mirror') { options.mirror = true; options.watchFlagsUsed = true; }
-    else if (arg === '--auto') { options.auto = true; options.watchFlagsUsed = true; }
-  }
-
-  return options;
-};
-
-const isVariant = (value: string): value is AIVariants => (VALID_VARIANTS as readonly string[]).includes(value);
-
-const clearScreen = () => {
-  if (output.isTTY) console.clear();
-};
-
-const formatCoord = (x: number, y: number) => `${COLUMN_LABELS[x]}${y + 1}`;
-
-const parseCoord = (value: string) => {
-  const match = value.trim().toUpperCase().match(/^([A-J])(10|[1-9])$/);
-  if (!match) return null;
-
-  const x = COLUMN_LABELS.indexOf(match[1]);
-  const y = Number(match[2]) - 1;
-  return { x, y };
-};
-
-const getShipSymbol = (board: Board, coord: string) => {
-  const shipName = Object.entries(board.shipLayouts).find(([, coords]) => coords.includes(coord))?.[0];
-  return shipName ? DISPLAY_SHIP_SYMBOLS[shipName] : 'S';
-};
-
-const getCellDisplay = (board: Board, x: number, y: number, revealShips: boolean) => {
-  const coord = `${x},${y}`;
-  const shipSymbol = getShipSymbol(board, coord);
-
-  if (board.sunkCells.has(coord)) return shipSymbol.toLowerCase();
-  if (board.hitsReceived.has(coord)) return '*';
-  if (board.misses.has(coord)) return '.';
-  if (revealShips && board.grid[x][y] === 1) return shipSymbol;
-  return '~';
-};
-
-const renderBoard = (title: string, board: Board, revealShips: boolean) => {
-  const header = COLUMN_LABELS.join(' ');
-  const rows = Array.from({ length: BOARD_SIZE }, (_, y) => {
-    const cells = Array.from({ length: BOARD_SIZE }, (_, x) => getCellDisplay(board, x, y, revealShips)).join(' ');
-    return `${String(y + 1).padStart(2, ' ')} ${cells}`;
-  });
-
-  return `${title}\n   ${header}\n${rows.join('\n')}`;
-};
-
-const ANSI_RESET = '\x1b[0m';
-const heatColor = (ratio: number) => {
-  if (ratio >= 1)   return '\x1b[1;95m'; // bright magenta — max
-  if (ratio >= 0.9) return '\x1b[1;31m'; // bright red
-  if (ratio >= 0.7) return '\x1b[31m';   // red
-  if (ratio >= 0.5) return '\x1b[33m';   // yellow
-  if (ratio >= 0.3) return '\x1b[32m';   // green
-  if (ratio >= 0.1) return '\x1b[36m';   // cyan
-  return '\x1b[34m';                      // blue — cold
-};
-
-const renderHeatmap = (title: string, board: Board, heatmap: number[][], includeLegend = true, pendingTarget?: { x: number, y: number }) => {
-  const header = COLUMN_LABELS.join(' ');
-  const rows = Array.from({ length: BOARD_SIZE }, (_, y) => {
-    const cells = Array.from({ length: BOARD_SIZE }, (_, x) => {
-      const coord = `${x},${y}`;
-
-      if (pendingTarget && x === pendingTarget.x && y === pendingTarget.y) {
-        return `\x1b[1;97m@${ANSI_RESET}`; // target — bright white bold
-      }
-
-      if (board.shotsFired.has(coord) || board.hitsReceived.has(coord) || board.misses.has(coord) || board.sunkCells.has(coord)) {
-        const cell = getCellDisplay(board, x, y, false);
-        if (cell === '*') return `\x1b[1;31m*${ANSI_RESET}`;          // hit — bright red
-        if (cell === '.') return `\x1b[2m.${ANSI_RESET}`;             // miss — dim
-        return `\x1b[90m${cell}${ANSI_RESET}`;                        // sunk — gray
-      }
-
-      const ratio = heatmap[x][y] ?? 0;
-      const digit = ratio >= 1 ? '$' : String(Math.max(0, Math.min(9, Math.floor(ratio * 10))));
-      return `${heatColor(ratio)}${digit}${ANSI_RESET}`;
-    }).join(' ');
-
-    return `${String(y + 1).padStart(2, ' ')} ${cells}`;
-  });
-
-  const legend = `\x1b[34m0\x1b[0m\x1b[36m2\x1b[0m\x1b[32m4\x1b[0m\x1b[33m6\x1b[0m\x1b[31m8\x1b[0m\x1b[1;95m$\x1b[0m cool→hot→max`;
-  return `${title}\n   ${header}\n${rows.join('\n')}${includeLegend ? `\n\nLegend: ${legend}` : ''}`;
-};
+import {
+  COLUMN_LABELS,
+  PROMPT_SHIP_ORDER,
+  DISPLAY_SHIP_SYMBOLS,
+  VALID_VARIANTS,
+  isVariant,
+  type AIVariants,
+  clearScreen,
+  formatCoord,
+  parseCoord,
+  renderBoard,
+  renderHeatmap,
+  printPatternHelp,
+  parseVars,
+  validateVars,
+  parseCommonArgs,
+} from './src/cli';
 
 const renderInteractiveBoards = (
   playerBoard: Board,
@@ -150,27 +27,29 @@ const renderInteractiveBoards = (
   aiController: AI,
   showHeatmap: boolean,
   statusLine = '',
+  pendingMove?: { origin: { x: number; y: number }; impactCells: Set<string> },
 ) => {
   clearScreen();
 
   if (showHeatmap) {
-    console.log(renderHeatmap('Enemy Heat Map', aiBoard, aiController.getHeatmap(aiBoard).heatmap, false));
+    console.log(
+      renderHeatmap(
+        'Enemy Waters',
+        aiBoard,
+        aiController.getHeatmap(aiBoard).heatmap,
+        false,
+        pendingMove,
+      ),
+    );
     console.log();
-    console.log(renderHeatmap('Your Heat Map', playerBoard, aiController.getHeatmap(playerBoard).heatmap));
+    console.log(renderHeatmap('Your Fleet', playerBoard, aiController.getHeatmap(playerBoard).heatmap));
   } else {
-    console.log(renderBoard('Enemy Waters', aiBoard, false));
+    console.log(renderBoard('Enemy Waters', aiBoard, false, pendingMove));
     console.log();
     console.log(renderBoard('Your Fleet', playerBoard, true));
   }
 
   console.log(`\n${statusLine}`);
-};
-
-const printPatternHelp = () => {
-  console.log('\nAvailable shot patterns:');
-  SHIP_NAMES.forEach((shipName) => {
-    console.log(`- ${shipName}: ${JSON.stringify(SHOT_PATTERNS[shipName])}`);
-  });
 };
 
 const runWatchMode = async (
@@ -229,16 +108,70 @@ const runWatchMode = async (
       const aliveA = match.boardA.getActiveShipNames().join(' ') || 'none';
       const aliveB = match.boardB.getActiveShipNames().join(' ') || 'none';
       if (showHeatmap) {
+        const previewA =
+          phase === 1
+            ? {
+                origin: { x: moveB.x, y: moveB.y },
+                impactCells: new Set(
+                  match.boardA.getImpactCoordinates(moveB.x, moveB.y, SHOT_PATTERNS[moveB.ship] ?? []),
+                ),
+              }
+            : undefined;
+        const previewB =
+          phase === 1
+            ? {
+                origin: { x: moveA.x, y: moveA.y },
+                impactCells: new Set(
+                  match.boardB.getImpactCoordinates(moveA.x, moveA.y, SHOT_PATTERNS[moveA.ship] ?? []),
+                ),
+              }
+            : undefined;
+
         // A's board overlaid with B's targeting heatmap (B is attacking A)
-        console.log(renderHeatmap(`Side A (${sideAVariant}) [alive: ${aliveA}]`, match.boardA, aiB.getHeatmap(match.boardA).heatmap, false, phase === 1 ? moveB : undefined));
+        console.log(
+          renderHeatmap(
+            `Side A (${sideAVariant}) [alive: ${aliveA}]`,
+            match.boardA,
+            aiB.getHeatmap(match.boardA).heatmap,
+            false,
+            previewA,
+          ),
+        );
         console.log();
         // B's board overlaid with A's targeting heatmap (A is attacking B)
-        console.log(renderHeatmap(`Side B (${sideBVariant}) [alive: ${aliveB}]`, match.boardB, aiA.getHeatmap(match.boardB).heatmap, false, phase === 1 ? moveA : undefined));
+        console.log(
+          renderHeatmap(
+            `Side B (${sideBVariant}) [alive: ${aliveB}]`,
+            match.boardB,
+            aiA.getHeatmap(match.boardB).heatmap,
+            false,
+            previewB,
+          ),
+        );
         console.log('\nLegend: 0-9 scaled heat, $ = 100%, @ = target');
       } else {
-        console.log(renderBoard(`Side A (${sideAVariant}) [alive: ${aliveA}]`, match.boardA, true));
+        const previewA =
+          phase === 1
+            ? {
+                origin: { x: moveB.x, y: moveB.y },
+                impactCells: new Set(
+                  match.boardA.getImpactCoordinates(moveB.x, moveB.y, SHOT_PATTERNS[moveB.ship] ?? []),
+                ),
+              }
+            : undefined;
+        const previewB =
+          phase === 1
+            ? {
+                origin: { x: moveA.x, y: moveA.y },
+                impactCells: new Set(
+                  match.boardB.getImpactCoordinates(moveA.x, moveA.y, SHOT_PATTERNS[moveA.ship] ?? []),
+                ),
+              }
+            : undefined;
+
+        console.log(renderBoard(`Side A (${sideAVariant}) [alive: ${aliveA}]`, match.boardA, true, previewA));
         console.log();
-        console.log(renderBoard(`Side B (${sideBVariant}) [alive: ${aliveB}]`, match.boardB, true));
+        console.log(renderBoard(`Side B (${sideBVariant}) [alive: ${aliveB}]`, match.boardB, true, previewB));
       }
       console.log(`\nRound ${round} | A avg hits/round: ${avgA} | B avg hits/round: ${avgB}`);
       
@@ -298,59 +231,91 @@ const getPlayerMove = async (
 ) => {
   let showHeatmap = false;
   let statusLine = '';
+  let pending: { ship: string; x: number; y: number } | null = null;
 
   while (true) {
-    renderInteractiveBoards(playerBoard, targetBoard, aiController, showHeatmap, statusLine);
+    const impactCells = pending
+      ? new Set(targetBoard.getImpactCoordinates(pending.x, pending.y, SHOT_PATTERNS[pending.ship] ?? []))
+      : new Set<string>();
 
-    const prompt = PROMPT_SHIP_ORDER
-      .filter((shipName) => activeShips.includes(shipName))
-      .map((shipName, index) => `${PROMPT_SHIP_ORDER.indexOf(shipName) + 1}:${shipName}`)
+    renderInteractiveBoards(
+      playerBoard,
+      targetBoard,
+      aiController,
+      showHeatmap,
+      statusLine,
+      pending ? { origin: { x: pending.x, y: pending.y }, impactCells } : undefined,
+    );
+
+    const shipList = PROMPT_SHIP_ORDER.filter((s) => activeShips.includes(s))
+      .map((s) => `${PROMPT_SHIP_ORDER.indexOf(s) + 1}:${s}`)
       .join(', ');
-    const shipChoice = (await rl.question(`\nSelect ship to fire with (${prompt}, h, or ?): `)).trim();
 
-    if (shipChoice === '?') {
+    const prompt = pending
+      ? `Previewing ${pending.ship} at ${formatCoord(pending.x, pending.y)}. Enter to FIRE, or new command: `
+      : `Enter command (e.g. '1 A5' or 'Carrier A5', ships: ${shipList}, h, ?): `;
+
+    const inputRaw = (await rl.question(`\n${prompt}`)).trim();
+
+    if (inputRaw === '' && pending) {
+      return pending;
+    }
+
+    if (inputRaw === '?') {
       printPatternHelp();
       await rl.question('\nPress Enter to continue...');
       continue;
     }
 
-    if (shipChoice.toLowerCase() === 'h') {
+    if (inputRaw.toLowerCase() === 'h') {
       showHeatmap = !showHeatmap;
-      statusLine = showHeatmap
-        ? 'Heat map view enabled. Enter h again to return to the normal board view.'
-        : '';
+      statusLine = showHeatmap ? 'Heat map view enabled.' : '';
       continue;
     }
 
-    const selectedShip = PROMPT_SHIP_ORDER[Number(shipChoice) - 1];
+    const parts = inputRaw.split(/\s+/);
+    if (parts.length < 2) {
+      statusLine = 'Invalid command format. Use "[ship] [coordinate]", e.g., "1 A5".';
+      pending = null;
+      continue;
+    }
+
+    const [shipToken, coordToken] = parts;
+    const selectedShip = PROMPT_SHIP_ORDER[Number(shipToken) - 1];
     const matchedShip =
       (selectedShip && activeShips.includes(selectedShip) ? selectedShip : null) ??
-      activeShips.find((shipName) => shipName.toLowerCase() === shipChoice.toLowerCase());
+      activeShips.find((s) => s.toLowerCase() === shipToken.toLowerCase());
 
     if (!matchedShip) {
-      statusLine = 'Invalid ship choice.';
+      statusLine = `Invalid ship: ${shipToken}.`;
+      pending = null;
       continue;
     }
 
-    const coordInput = (await rl.question('Target (e.g. A5): ')).trim();
-    const parsedCoord = parseCoord(coordInput);
-
+    const parsedCoord = parseCoord(coordToken);
     if (!parsedCoord) {
-      statusLine = 'Invalid input. Use chess coordinates like A5.';
+      statusLine = `Invalid coordinate: ${coordToken}.`;
+      pending = null;
       continue;
     }
 
     if (!targetBoard.canTargetCell(parsedCoord.x, parsedCoord.y, matchedShip)) {
       statusLine = 'That shot pattern cannot hit any new cell from that origin.';
+      pending = null;
       continue;
     }
 
-    return { x: parsedCoord.x, y: parsedCoord.y, ship: matchedShip };
+    pending = { x: parsedCoord.x, y: parsedCoord.y, ship: matchedShip };
+    statusLine = '';
   }
 };
 
 const main = async () => {
-  const { ai, help, watch, sideA, sideB, fleetSeed, moveSeed, seed, game, mirror, auto, watchFlagsUsed, vars, varsA, varsB } = parseArgs();
+  const options = parseCommonArgs(process.argv.slice(2));
+  const { ai, help, watch, sideA, sideB, fleetSeed, moveSeed, seed, game, mirror, auto, vars, varsA, varsB } = options;
+
+  const watchFlags = ['--sideA', '--sideB', '--varsA', '--varsB', '--fleet-seed', '--move-seed', '--seed', '--game', '--mirror', '--auto'];
+  const watchFlagsUsed = process.argv.some((arg) => watchFlags.includes(arg));
 
   if (help) {
     console.log([

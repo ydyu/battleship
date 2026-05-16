@@ -356,59 +356,5 @@ export const AI_PARAM_SCHEMAS: Record<string, AiParamSchema> = {
   ...Object.fromEntries(Object.keys(EXPERIMENTS).map((k) => [k, {}])),
 };
 
-export const parseVars = (raw: string): Record<string, string> => {
-  if (!raw) return {};
-  return Object.fromEntries(
-    raw.split(',').map((pair) => {
-      const eq = pair.indexOf('=');
-      if (eq === -1) return [pair, ''];
-      return [pair.slice(0, eq), pair.slice(eq + 1)];
-    }),
-  );
-};
-
-export const printSchema = (variant: string) => {
-  const schema = AI_PARAM_SCHEMAS[variant] ?? {};
-  const entries = Object.entries(schema);
-  if (entries.length === 0) {
-    console.log(`  (no tunable parameters)`);
-  } else {
-    for (const [key, def] of entries) {
-      console.log(`  ${key.padEnd(14)}${def.type.padEnd(9)}default=${def.default}   ${def.description}`);
-    }
-  }
-};
-
-export const validateVars = (
-  vars: Record<string, string>,
-  variant: string,
-  side: string,
-): Record<string, number | boolean> | null => {
-  const schema = AI_PARAM_SCHEMAS[variant] ?? {};
-  const result: Record<string, number | boolean> = {};
-
-  for (const [key, val] of Object.entries(vars)) {
-    if (!(key in schema)) {
-      console.error(`Error: Unknown parameter '${key}' for ${side} variant '${variant}'.\n`);
-      console.error(`Parameters for ${variant}:`);
-      printSchema(variant);
-      return null;
-    }
-    const def = schema[key];
-    if (def.type === 'number') {
-      const n = Number(val);
-      if (Number.isNaN(n)) {
-        console.error(`Error: Parameter '${key}' expects a number, got '${val}'.`);
-        return null;
-      }
-      result[key] = n;
-    } else {
-      result[key] = val === 'true' || val === '1';
-    }
-  }
-
-  return result;
-};
-
 export const placeFleetRandomly = (shipTypes: ShipDefinition[] = SHIP_TYPES): Board =>
   new RandomPlacementStrategy().placeFleet(shipTypes);
