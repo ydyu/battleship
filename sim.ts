@@ -1,5 +1,5 @@
 import { AI } from './src/ai';
-import { BattleshipMatch, Board, SHIP_TYPES } from './src/engine';
+import { BattleshipMatch, Board, SHIP_TYPES, SHIP_NAMES } from './src/engine';
 import { mulberry32, type RngFn } from './src/ai-utils';
 import {
   VALID_VARIANTS,
@@ -52,6 +52,20 @@ const printFleet = (side: string, board: Board) => {
   }
 };
 
+interface MatchEndState {
+  totalHP: number;
+  untouchedShips: number;
+  woundedShips: number;
+}
+
+interface MatchResult {
+  winnerId: 'sideA' | 'sideB' | 'draw';
+  rounds: number;
+  roundsA: number | null;
+  roundsB: number | null;
+  endState: MatchEndState | null;
+}
+
 const runMatch = (
   sideAVariant: AIVariants,
   sideBVariant: AIVariants,
@@ -64,17 +78,64 @@ const runMatch = (
   configB?: Record<string, number | boolean>,
   preplacedA?: Board,
   preplacedB?: Board,
-) => {
+): MatchResult => {
   const sideA = new AI(sideAVariant, configA);
   const sideB = new AI(sideBVariant, configB);
   const fleetA = preplacedA ?? sideA.placeFleet(undefined, rngFleetA);
   const fleetB = preplacedB ?? sideB.placeFleet(undefined, rngFleetB);
   const match = new BattleshipMatch(fleetA, fleetB, 'sideA', 'sideB');
 
-  while (!match.isGameOver) {
-    const moveA = sideA.selectMove(match.boardB, match.boardA.getActiveShipNames(), rngMoveA);
-    const moveB = sideB.selectMove(match.boardA, match.boardB.getActiveShipNames(), rngMoveB);
+  let roundsA: number | null = null;
+  let roundsB: number | null = null;
+  let firstWinnerId: 'sideA' | 'sideB' | 'draw' | null = null;
+  let endState: MatchEndState | null = null;
+
+  while ((roundsA === null || roundsB === null) && match.round < 100) {
+    const moveA = roundsA === null
+      ? sideA.selectMove(match.boardB, match.boardA.getActiveShipNames().length > 0 ? match.boardA.getActiveShipNames() : SHIP_NAMES, rngMoveA)
+      : { x: 0, y: 0, ship: 'None', pattern: [] };
+    const moveB = roundsB === null
+      ? sideB.selectMove(match.boardA, match.boardB.getActiveShipNames().length > 0 ? match.boardB.getActiveShipNames() : SHIP_NAMES, rngMoveB)
+      : { x: 0, y: 0, ship: 'None', pattern: [] };
+
     const result = match.resolveTurn(moveA, moveB);
+
+    if (match.boardB.isGameOver() && roundsA === null) {
+      roundsA = match.round;
+    }
+    if (match.boardA.isGameOver() && roundsB === null) {
+      roundsB = match.round;
+    }
+
+    // Capture endState of winner at the moment of first victory
+    if (match.winner && !firstWinnerId) {
+      firstWinnerId = match.winner as any;
+      const winnerBoard = firstWinnerId === 'sideA' ? match.boardA : match.boardB;
+      // If it's a draw, winnerBoard could be sideA (arbitrarily) or we handle it
+      const boardToMeasure = firstWinnerId === 'draw' ? match.boardA : winnerBoard;
+
+      const shipLayouts = boardToMeasure.shipLayouts;
+      const hitsReceived = boardToMeasure.hitsReceived;
+      const activeShips = boardToMeasure.activeShips;
+
+      let totalHP = 0;
+      for (const coords of Object.values(activeShips)) {
+        totalHP += coords.length;
+      }
+
+      let untouchedShips = 0;
+      let woundedShips = 0;
+      for (const [name, coords] of Object.entries(shipLayouts)) {
+        const hits = coords.filter(c => hitsReceived.has(c)).length;
+        if (hits === 0) {
+          untouchedShips += 1;
+        } else if (activeShips[name]) {
+          woundedShips += 1;
+        }
+      }
+
+      endState = { totalHP, untouchedShips, woundedShips };
+    }
 
     if (verbose) {
       console.log(
@@ -84,7 +145,13 @@ const runMatch = (
     }
   }
 
-  return { winnerId: match.winner ?? 'draw', rounds: match.round };
+  return {
+    winnerId: firstWinnerId ?? 'draw',
+    rounds: match.round,
+    roundsA,
+    roundsB,
+    endState,
+  };
 };
 
 const main = () => {
@@ -175,11 +242,18 @@ const main = () => {
   console.log(`Running ${games} games...`);
 
   const summary = {
-    sideA: { wins: 0, rounds: [] as number[] },
-    sideB: { wins: 0, rounds: [] as number[] },
+    sideA: { wins: 0, rounds: [] as number[], lossMetrics: [] as { extraRounds: number; endState: MatchEndState }[] },
+    sideB: { wins: 0, rounds: [] as number[], lossMetrics: [] as { extraRounds: number; endState: MatchEndState }[] },
     draw: { count: 0, rounds: [] as number[] },
   };
-  type LossEntry = { game: number; rounds: number; fleetSeed?: number; moveSeed?: number };
+  type LossEntry = {
+    game: number;
+    rounds: number;
+    fleetSeed?: number;
+    moveSeed?: number;
+    extraRounds: number;
+    endState: MatchEndState;
+  };
   const lossesA: LossEntry[] = []; // games sideA lost (sideB won)
   const lossesB: LossEntry[] = []; // games sideB lost (sideA won)
 
@@ -188,10 +262,10 @@ const main = () => {
     const effectiveMoveSeed = moveSeed ?? (seed !== undefined ? seed + i * 2 + 1 : undefined);
 
     const rngFleetA = effectiveFleetSeed !== undefined ? mulberry32(effectiveFleetSeed) : undefined;
-    const rngFleetB = (mirror && effectiveFleetSeed !== undefined) ? mulberry32(effectiveFleetSeed) : rngFleetA;
+    const rngFleetB = mirror && effectiveFleetSeed !== undefined ? mulberry32(effectiveFleetSeed) : rngFleetA;
 
     const rngMoveA = effectiveMoveSeed !== undefined ? mulberry32(effectiveMoveSeed) : undefined;
-    const rngMoveB = (mirror && effectiveMoveSeed !== undefined) ? mulberry32(effectiveMoveSeed) : rngMoveA;
+    const rngMoveB = mirror && effectiveMoveSeed !== undefined ? mulberry32(effectiveMoveSeed) : rngMoveA;
 
     const aiA = new AI(sideA, parsedVarsA ?? undefined);
     const aiB = new AI(sideB, parsedVarsB ?? undefined);
@@ -204,21 +278,50 @@ const main = () => {
       printFleet('sideB', placedB);
     }
 
-    const result = runMatch(sideA, sideB, verbose, rngFleetA, rngFleetB, rngMoveA, rngMoveB, parsedVarsA, parsedVarsB, placedA, placedB);
+    const result = runMatch(
+      sideA,
+      sideB,
+      verbose,
+      rngFleetA,
+      rngFleetB,
+      rngMoveA,
+      rngMoveB,
+      parsedVarsA,
+      parsedVarsB,
+      placedA,
+      placedB,
+    );
 
-    const mkEntry = (): LossEntry | null =>
+    const mkEntry = (r: number, extraRounds: number, endState: MatchEndState): LossEntry | null =>
       isSeeded
-        ? { game: i, rounds: result.rounds, fleetSeed: effectiveFleetSeed, moveSeed: effectiveMoveSeed }
+        ? {
+            game: i,
+            rounds: r,
+            fleetSeed: effectiveFleetSeed,
+            moveSeed: effectiveMoveSeed,
+            extraRounds,
+            endState,
+          }
         : null;
 
     if (result.winnerId === 'sideA') {
       summary.sideA.wins += 1;
-      summary.sideA.rounds.push(result.rounds);
-      const e = mkEntry(); if (e) lossesB.push(e);
+      summary.sideA.rounds.push(result.roundsA!);
+      if (result.roundsB !== null && result.endState) {
+        const extraRounds = result.roundsB - result.roundsA!;
+        summary.sideB.lossMetrics.push({ extraRounds, endState: result.endState });
+        const e = mkEntry(result.roundsA!, extraRounds, result.endState);
+        if (e) lossesB.push(e);
+      }
     } else if (result.winnerId === 'sideB') {
       summary.sideB.wins += 1;
-      summary.sideB.rounds.push(result.rounds);
-      const e = mkEntry(); if (e) lossesA.push(e);
+      summary.sideB.rounds.push(result.roundsB!);
+      if (result.roundsA !== null && result.endState) {
+        const extraRounds = result.roundsA - result.roundsB!;
+        summary.sideA.lossMetrics.push({ extraRounds, endState: result.endState });
+        const e = mkEntry(result.roundsB!, extraRounds, result.endState);
+        if (e) lossesA.push(e);
+      }
     } else {
       summary.draw.count += 1;
       summary.draw.rounds.push(result.rounds);
@@ -240,6 +343,16 @@ const main = () => {
     };
   };
 
+  const getLossStats = (metrics: { extraRounds: number; endState: MatchEndState }[]) => {
+    if (metrics.length === 0) return 'N/A';
+    const count = metrics.length;
+    const avgExtra = (metrics.reduce((s, m) => s + m.extraRounds, 0) / count).toFixed(1);
+    const avgHP = (metrics.reduce((s, m) => s + m.endState.totalHP, 0) / count).toFixed(1);
+    const avgUntouched = (metrics.reduce((s, m) => s + m.endState.untouchedShips, 0) / count).toFixed(1);
+    const avgWounded = (metrics.reduce((s, m) => s + m.endState.woundedShips, 0) / count).toFixed(1);
+    return `+${avgExtra}rd, ${avgHP}HP left (${avgUntouched} untouched, ${avgWounded} wounded) avg`;
+  };
+
   console.log('\n' + '='.repeat(40));
   console.log('SIMULATION RESULTS');
   console.log('='.repeat(40));
@@ -251,6 +364,7 @@ const main = () => {
   if (summary.sideA.rounds.length > 0) {
     console.log(`  Min/Max:   ${statsA.min} / ${statsA.max}`);
   }
+  console.log(`  When Lost: ${getLossStats(summary.sideA.lossMetrics)}`);
 
   const statsB = getStats(summary.sideB.rounds);
   console.log(`\nSide B (${sideB.toUpperCase()}):`);
@@ -259,6 +373,7 @@ const main = () => {
   if (summary.sideB.rounds.length > 0) {
     console.log(`  Min/Max:   ${statsB.min} / ${statsB.max}`);
   }
+  console.log(`  When Lost: ${getLossStats(summary.sideB.lossMetrics)}`);
 
   if (summary.draw.count > 0) {
     const statsDraw = getStats(summary.draw.rounds);
@@ -279,15 +394,25 @@ const main = () => {
       const sample = list[Math.floor(list.length / 2)];
       const seen = new Set<number>();
       const result: Array<[string, LossEntry]> = [];
-      for (const [label, entry] of [['fastest', fastest], ['sample ', sample], ['slowest', slowest]] as Array<[string, LossEntry]>) {
-        if (!seen.has(entry.game)) { seen.add(entry.game); result.push([label, entry]); }
+      for (const [label, entry] of [
+        ['fastest', fastest],
+        ['sample ', sample],
+        ['slowest', slowest],
+      ] as Array<[string, LossEntry]>) {
+        if (!seen.has(entry.game)) {
+          seen.add(entry.game);
+          result.push([label, entry]);
+        }
       }
       return result;
     };
     const printNotable = (heading: string, list: LossEntry[]) => {
       if (list.length === 0) return;
       console.log(`\nNotable ${heading} losses:`);
-      const fmtVars = (v: Record<string, string>) => Object.entries(v).map(([k, val]) => `${k}=${val}`).join(',');
+      const fmtVars = (v: Record<string, string>) =>
+        Object.entries(v)
+          .map(([k, val]) => `${k}=${val}`)
+          .join(',');
       const strA = Object.keys(varsA).length > 0 ? ` --varsA ${fmtVars(varsA)}` : '';
       const strB = Object.keys(varsB).length > 0 ? ` --varsB ${fmtVars(varsB)}` : '';
 
@@ -296,8 +421,12 @@ const main = () => {
         if (entry.fleetSeed !== undefined) seedParts.push(`--fleet-seed ${entry.fleetSeed}`);
         if (entry.moveSeed !== undefined) seedParts.push(`--move-seed ${entry.moveSeed}`);
         const seedStr = seedParts.length > 0 ? ' ' + seedParts.join(' ') : '';
-        const replay = `npx tsx sim.ts${seedStr} --sideA ${sideA} --sideB ${sideB}${strA}${strB} --games 1 --verbose${mirror ? ' --mirror' : ''}`;
-        console.log(`  ${kind}  game ${entry.game}  (${entry.rounds} rds)  →  ${replay}`);
+        const replay = `npx tsx sim.ts${seedStr} --sideA ${sideA} --sideB ${sideB}${strA}${strB} --games 1 --verbose${
+          mirror ? ' --mirror' : ''
+        }`;
+        const es = entry.endState;
+        const metrics = `(+${entry.extraRounds}rd, ${es.totalHP}HP left (${es.untouchedShips} untouched, ${es.woundedShips} wounded))`;
+        console.log(`  ${kind}  game ${entry.game.toString().padEnd(3)} ${metrics.padEnd(45)}  →  ${replay}`);
       }
     };
     printNotable('sideA', lossesA);

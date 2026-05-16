@@ -316,7 +316,8 @@ export class AI {
 
   constructor(variant: AIVariants = 'expert', config?: Record<string, number | boolean>) {
     if (EXPERIMENTS[variant]) {
-      this.variant = EXPERIMENTS[variant];
+      const ExperimentClass = EXPERIMENTS[variant];
+      this.variant = new ExperimentClass(config);
       return;
     }
 
@@ -353,7 +354,9 @@ export const AI_PARAM_SCHEMAS: Record<string, AiParamSchema> = {
   novice: NoviceAI.paramSchema,
   medium: MediumAI.paramSchema,
   expert: ExpertAI.paramSchema,
-  ...Object.fromEntries(Object.keys(EXPERIMENTS).map((k) => [k, {}])),
+  ...Object.fromEntries(
+    Object.entries(EXPERIMENTS).map(([k, cls]) => [k, (cls as any).paramSchema ?? {}]),
+  ),
 };
 
 export const placeFleetRandomly = (shipTypes: ShipDefinition[] = SHIP_TYPES): Board =>

@@ -28,28 +28,41 @@ const renderInteractiveBoards = (
   showHeatmap: boolean,
   statusLine = '',
   pendingMove?: { origin: { x: number; y: number }; impactCells: Set<string> },
+  lastPlayerMove?: { origin: { x: number; y: number }; impactCells: Set<string> },
+  lastAIMove?: { origin: { x: number; y: number }; impactCells: Set<string> },
 ) => {
   clearScreen();
+
+  const alivePlayer = playerBoard.getActiveShipNames().join(' ') || 'none';
+  const aliveAI = aiBoard.getActiveShipNames().join(' ') || 'none';
 
   if (showHeatmap) {
     console.log(
       renderHeatmap(
-        'Enemy Waters',
+        `Enemy Waters [${aliveAI}]`,
         aiBoard,
         aiController.getHeatmap(aiBoard).heatmap,
         false,
-        pendingMove,
+        pendingMove || lastPlayerMove,
       ),
     );
     console.log();
-    console.log(renderHeatmap('Your Fleet', playerBoard, aiController.getHeatmap(playerBoard).heatmap));
+    console.log(
+      renderHeatmap(
+        `Your Fleet [${alivePlayer}]`,
+        playerBoard,
+        aiController.getHeatmap(playerBoard).heatmap,
+        false,
+        lastAIMove,
+      ),
+    );
   } else {
-    console.log(renderBoard('Enemy Waters', aiBoard, false, pendingMove));
+    console.log(renderBoard(`Enemy Waters [${aliveAI}]`, aiBoard, false, pendingMove || lastPlayerMove));
     console.log();
-    console.log(renderBoard('Your Fleet', playerBoard, true));
+    console.log(renderBoard(`Your Fleet [${alivePlayer}]`, playerBoard, true, lastAIMove));
   }
 
-  console.log(`\n${statusLine}`);
+  if (statusLine) console.log(`\n${statusLine}`);
 };
 
 const runWatchMode = async (
@@ -130,7 +143,7 @@ const runWatchMode = async (
         // A's board overlaid with B's targeting heatmap (B is attacking A)
         console.log(
           renderHeatmap(
-            `Side A (${sideAVariant}) [alive: ${aliveA}]`,
+            `Side A (${sideAVariant}) [${aliveA}]`,
             match.boardA,
             aiB.getHeatmap(match.boardA).heatmap,
             false,
@@ -141,7 +154,7 @@ const runWatchMode = async (
         // B's board overlaid with A's targeting heatmap (A is attacking B)
         console.log(
           renderHeatmap(
-            `Side B (${sideBVariant}) [alive: ${aliveB}]`,
+            `Side B (${sideBVariant}) [${aliveB}]`,
             match.boardB,
             aiA.getHeatmap(match.boardB).heatmap,
             false,
@@ -169,11 +182,11 @@ const runWatchMode = async (
               }
             : undefined;
 
-        console.log(renderBoard(`Side A (${sideAVariant}) [alive: ${aliveA}]`, match.boardA, true, previewA));
+        console.log(renderBoard(`Side A (${sideAVariant}) [${aliveA}]`, match.boardA, true, previewA));
         console.log();
-        console.log(renderBoard(`Side B (${sideBVariant}) [alive: ${aliveB}]`, match.boardB, true, previewB));
+        console.log(renderBoard(`Side B (${sideBVariant}) [${aliveB}]`, match.boardB, true, previewB));
       }
-      console.log(`\nRound ${round} | A avg hits/round: ${avgA} | B avg hits/round: ${avgB}`);
+      console.log(`\nRound ${round} | Hits/round: A ${avgA}, B ${avgB}`);
       
       if (phase === 1) {
         console.log(`→ Side A (${moveA.ship}) targets ${formatCoord(moveA.x, moveA.y)}  |  Side B (${moveB.ship}) targets ${formatCoord(moveB.x, moveB.y)}`);
@@ -196,7 +209,7 @@ const runWatchMode = async (
     if (!auto) {
       let advancing = false;
       while (!advancing) {
-        const key = (await rl.question('\nEnter=fire, h=heatmap, q=quit: ')).trim().toLowerCase();
+        const key = (await rl.question('\n[Enter]=Fire, h=Heat, q=Quit: ')).trim().toLowerCase();
         if (key === 'q') { quit = true; advancing = true; }
         else if (key === 'h') { showHeatmap = !showHeatmap; renderState(1); }
         else { advancing = true; }
@@ -213,7 +226,7 @@ const runWatchMode = async (
     if (!auto && !match.isGameOver) {
       let advancing = false;
       while (!advancing) {
-        const key = (await rl.question('\nEnter=next turn, h=heatmap, q=quit: ')).trim().toLowerCase();
+        const key = (await rl.question('\n[Enter]=Next, h=Heat, q=Quit: ')).trim().toLowerCase();
         if (key === 'q') { quit = true; advancing = true; }
         else if (key === 'h') { showHeatmap = !showHeatmap; renderState(2); }
         else { advancing = true; }
@@ -228,9 +241,12 @@ const getPlayerMove = async (
   targetBoard: Board,
   activeShips: string[],
   aiController: AI,
+  initialStatusLine = '',
+  lastPlayerMove?: { origin: { x: number; y: number }; impactCells: Set<string> },
+  lastAIMove?: { origin: { x: number; y: number }; impactCells: Set<string> },
 ) => {
   let showHeatmap = false;
-  let statusLine = '';
+  let statusLine = initialStatusLine;
   let pending: { ship: string; x: number; y: number } | null = null;
 
   while (true) {
@@ -245,6 +261,8 @@ const getPlayerMove = async (
       showHeatmap,
       statusLine,
       pending ? { origin: { x: pending.x, y: pending.y }, impactCells } : undefined,
+      lastPlayerMove,
+      lastAIMove,
     );
 
     const shipList = PROMPT_SHIP_ORDER.filter((s) => activeShips.includes(s))
@@ -252,8 +270,8 @@ const getPlayerMove = async (
       .join(', ');
 
     const prompt = pending
-      ? `Previewing ${pending.ship} at ${formatCoord(pending.x, pending.y)}. Enter to FIRE, or new command: `
-      : `Enter command (e.g. '1 A5' or 'Carrier A5', ships: ${shipList}, h, ?): `;
+      ? `Preview ${pending.ship} at ${formatCoord(pending.x, pending.y)}. [Enter]=FIRE, or new CMD: `
+      : `Ships: ${shipList}\nEnter CMD (e.g. '1 A5', 'h' for heatmap, '?' for help): `;
 
     const inputRaw = (await rl.question(`\n${prompt}`)).trim();
 
@@ -263,7 +281,7 @@ const getPlayerMove = async (
 
     if (inputRaw === '?') {
       printPatternHelp();
-      await rl.question('\nPress Enter to continue...');
+      await rl.question('\n[Enter] to continue...');
       continue;
     }
 
@@ -275,7 +293,7 @@ const getPlayerMove = async (
 
     const parts = inputRaw.split(/\s+/);
     if (parts.length < 2) {
-      statusLine = 'Invalid command format. Use "[ship] [coordinate]", e.g., "1 A5".';
+      statusLine = 'Invalid CMD. Use "[ship] [coordinate]", e.g., "1 A5".';
       pending = null;
       continue;
     }
@@ -300,7 +318,7 @@ const getPlayerMove = async (
     }
 
     if (!targetBoard.canTargetCell(parsedCoord.x, parsedCoord.y, matchedShip)) {
-      statusLine = 'That shot pattern cannot hit any new cell from that origin.';
+      statusLine = 'Shot pattern cannot hit any new cell from there.';
       pending = null;
       continue;
     }
@@ -387,10 +405,14 @@ const main = async () => {
   const aiController = new AI(ai, parsedVars);
   const match = new BattleshipMatch(placeFleetRandomly(), aiController.placeFleet(), 'player', 'ai');
 
+  let lastPlayerMoveContext: { origin: { x: number; y: number }; impactCells: Set<string> } | undefined;
+  let lastAIMoveContext: { origin: { x: number; y: number }; impactCells: Set<string> } | undefined;
+  let turnStatus = '';
+
   try {
     console.log('Welcome to Tactical Battleship!');
     console.log(`AI variant: ${ai}`);
-    await rl.question('\nPress Enter to begin...');
+    await rl.question('\n[Enter] to begin...');
 
     while (true) {
       const playerDead = match.boardA.isGameOver();
@@ -398,13 +420,18 @@ const main = async () => {
 
       if (playerDead || aiDead) {
         clearScreen();
-        console.log(renderBoard('Enemy Waters', match.boardB, true));
-        console.log();
-        console.log(renderBoard('Your Fleet', match.boardA, true));
+        const alivePlayer = match.boardA.getActiveShipNames().join(' ') || 'none';
+        const aliveAI = match.boardB.getActiveShipNames().join(' ') || 'none';
 
-        if (playerDead && aiDead) console.log("\n!!! MUTUAL DESTRUCTION !!!\nBoth fleets have been destroyed. It's a draw!");
-        else if (aiDead) console.log('\n!!! VICTORY !!!\nYou have sunk the entire enemy fleet.');
-        else console.log('\n!!! DEFEAT !!!\nYour fleet has been destroyed.');
+        console.log(renderBoard(`Enemy Waters [${aliveAI}]`, match.boardB, true, lastPlayerMoveContext));
+        console.log();
+        console.log(renderBoard(`Your Fleet [${alivePlayer}]`, match.boardA, true, lastAIMoveContext));
+
+        if (turnStatus) console.log(`\n${turnStatus}`);
+
+        if (playerDead && aiDead) console.log("\n!!! MUTUAL DESTRUCTION !!!\nBoth fleets destroyed. It's a draw!");
+        else if (aiDead) console.log('\n!!! VICTORY !!!\nYou sunk the enemy fleet.');
+        else console.log('\n!!! DEFEAT !!!\nYour fleet was destroyed.');
         break;
       }
 
@@ -414,27 +441,29 @@ const main = async () => {
         match.boardB,
         match.boardA.getActiveShipNames(),
         aiController,
+        turnStatus,
+        lastPlayerMoveContext,
+        lastAIMoveContext,
       );
       const aiMove = aiController.selectMove(match.boardA, match.boardB.getActiveShipNames());
 
       const result = match.resolveTurn(playerMove, aiMove);
 
-      clearScreen();
-      console.log(renderBoard('Enemy Waters', match.boardB, false));
-      console.log();
-      console.log(renderBoard('Your Fleet', match.boardA, true));
-      console.log(`\nYOU FIRED: ${playerMove.ship} at ${formatCoord(playerMove.x, playerMove.y)}.`);
-      console.log(result.attackA.hits > 0 ? `BOOM! ${result.attackA.hits} hit(s) recorded!` : 'Splash... You missed.');
-      result.attackA.sunkShips.forEach((ship) => console.log(`Enemy ${ship} destroyed!`));
-      console.log(`\nAI FIRED: ${aiMove.ship} at ${formatCoord(aiMove.x, aiMove.y)}.`);
-      console.log(result.attackB.hits > 0 ? `DANGER! The enemy scored ${result.attackB.hits} hit(s) on your fleet!` : 'The enemy missed.');
-      result.attackB.sunkShips.forEach((ship) => console.log(`CRITICAL: Your ${ship} was destroyed!`));
+      // Update contexts for highlights
+      lastPlayerMoveContext = {
+        origin: { x: playerMove.x, y: playerMove.y },
+        impactCells: new Set(match.boardB.getImpactCoordinates(playerMove.x, playerMove.y, SHOT_PATTERNS[playerMove.ship] ?? [])),
+      };
+      lastAIMoveContext = {
+        origin: { x: aiMove.x, y: aiMove.y },
+        impactCells: new Set(match.boardA.getImpactCoordinates(aiMove.x, aiMove.y, SHOT_PATTERNS[aiMove.ship] ?? [])),
+      };
 
-      if (result.winnerId) {
-        await rl.question('\nPress Enter to view final result...');
-      } else {
-        await rl.question('\nPress Enter for next round...');
-      }
+      // Format personable two-line status
+      const pRes = result.attackA.hits > 0 ? `BOOM! ${result.attackA.hits} hit${result.attackA.hits > 1 ? 's' : ''}${result.attackA.sunkShips.length ? ` (Enemy ${result.attackA.sunkShips.join(', ')} destroyed!)` : ''}` : 'Splash... Missed.';
+      const aRes = result.attackB.hits > 0 ? `BOOM! ${result.attackB.hits} hit${result.attackB.hits > 1 ? 's' : ''}${result.attackB.sunkShips.length ? ` (Your ${result.attackB.sunkShips.join(', ')} destroyed!)` : ''}` : 'Splash... Missed.';
+      
+      turnStatus = `YOU fired ${playerMove.ship} at ${formatCoord(playerMove.x, playerMove.y)}: ${pRes}\nAI fired ${aiMove.ship} at ${formatCoord(aiMove.x, aiMove.y)}: ${aRes}`;
     }
   } finally {
     rl.close();

@@ -64,13 +64,19 @@ export const renderBoard = (
       const coord = `${x},${y}`;
 
       if (pendingMove && x === pendingMove.origin.x && y === pendingMove.origin.y) {
-        return `\x1b[1;97m@\x1b[0m`;
+        return `\x1b[1;97m@${ANSI_RESET}`;
       }
 
       const char = getCellDisplay(board, x, y, revealShips);
       if (pendingMove && pendingMove.impactCells.has(coord)) {
-        return `\x1b[1;97m${char}\x1b[0m`;
+        return `\x1b[1;97m${char}${ANSI_RESET}`;
       }
+
+      if (char === '*') return `\x1b[1;31m*${ANSI_RESET}`; // hit - bright red
+      if (char === '.') return `\x1b[2m.${ANSI_RESET}`;    // miss - dim
+      if (char === '~') return `\x1b[34m~${ANSI_RESET}`;   // water - blue
+      if (/[a-z]/.test(char)) return `\x1b[90m${char}${ANSI_RESET}`; // sunk - gray
+      if (/[A-Z]/.test(char)) return `\x1b[32m${char}${ANSI_RESET}`; // ship - green
 
       return char;
     }).join(' ');
