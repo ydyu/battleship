@@ -1,19 +1,8 @@
-import { AI, ALL_AI_VARIANTS, AI_PARAM_SCHEMAS, type AIVariants } from './src/ai';
+import { AI, ALL_AI_VARIANTS, AI_PARAM_SCHEMAS, type AIVariants, parseVars, validateVars, printSchema } from './src/ai';
 import { BattleshipMatch, Board, SHIP_TYPES } from './src/engine';
 import { mulberry32, type RngFn } from './src/ai-utils';
 
 const VALID_VARIANTS = ALL_AI_VARIANTS;
-
-const parseVars = (raw: string): Record<string, string> => {
-  if (!raw) return {};
-  return Object.fromEntries(
-    raw.split(',').map((pair) => {
-      const eq = pair.indexOf('=');
-      if (eq === -1) return [pair, ''];
-      return [pair.slice(0, eq), pair.slice(eq + 1)];
-    }),
-  );
-};
 
 const isVariant = (value: string): value is AIVariants => (VALID_VARIANTS as readonly string[]).includes(value);
 
@@ -104,37 +93,6 @@ const parseArgs = () => {
   return options;
 };
 
-const validateVars = (
-  vars: Record<string, string>,
-  variant: string,
-  side: string,
-): Record<string, number | boolean> | null => {
-  const schema = AI_PARAM_SCHEMAS[variant] ?? {};
-  const result: Record<string, number | boolean> = {};
-
-  for (const [key, val] of Object.entries(vars)) {
-    if (!(key in schema)) {
-      console.error(`Error: Unknown parameter '${key}' for ${side} variant '${variant}'.\n`);
-      console.error(`Parameters for ${variant}:`);
-      printSchema(variant);
-      return null;
-    }
-    const def = schema[key];
-    if (def.type === 'number') {
-      const n = Number(val);
-      if (Number.isNaN(n)) {
-        console.error(`Error: Parameter '${key}' expects a number, got '${val}'.`);
-        return null;
-      }
-      result[key] = n;
-    } else {
-      result[key] = val === 'true' || val === '1';
-    }
-  }
-
-  return result;
-};
-
 const printFleet = (side: string, board: Board) => {
   console.log(`  ${side} fleet:`);
   for (const { name } of SHIP_TYPES) {
@@ -144,19 +102,6 @@ const printFleet = (side: string, board: Board) => {
     console.log(`    ${name.padEnd(12)} ${cells}`);
   }
 };
-
-const printSchema = (variant: string) => {
-  const schema = AI_PARAM_SCHEMAS[variant] ?? {};
-  const entries = Object.entries(schema);
-  if (entries.length === 0) {
-    console.log(`  (no tunable parameters)`);
-  } else {
-    for (const [key, def] of entries) {
-      console.log(`  ${key.padEnd(14)}${def.type.padEnd(9)}default=${def.default}   ${def.description}`);
-    }
-  }
-};
-
 
 const runMatch = (
   sideAVariant: AIVariants,

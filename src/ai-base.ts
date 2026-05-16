@@ -192,12 +192,21 @@ export abstract class AIVariant {
   protected readonly placementStrategy: PlacementStrategy = new RandomPlacementStrategy();
 
   getHeatmap(board: Board, activeShipNames: string[] = board.getActiveShipNames()): HeatmapResult {
-    const { rawHeatmap, maxVal } = this.heatmapStrategy.generate(board, activeShipNames);
+    const { rawHeatmap } = this.heatmapStrategy.generate(board, activeShipNames);
+
+    let maxUnfiredVal = 0;
+    for (let x = 0; x < BOARD_SIZE; x += 1) {
+      for (let y = 0; y < BOARD_SIZE; y += 1) {
+        if (!board.shotsFired.has(`${x},${y}`)) {
+          maxUnfiredVal = Math.max(maxUnfiredVal, rawHeatmap[x][y]);
+        }
+      }
+    }
 
     return {
-      heatmap: normalizeHeatmap(rawHeatmap, maxVal),
+      heatmap: normalizeHeatmap(rawHeatmap, maxUnfiredVal),
       rawHeatmap,
-      maxVal,
+      maxVal: maxUnfiredVal,
     };
   }
 
