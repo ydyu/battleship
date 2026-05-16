@@ -15,6 +15,23 @@ export interface AiParamDef {
 }
 export type AiParamSchema = Record<string, AiParamDef>;
 
+export interface ExpertHeatmapConfig {
+  overlapBase: number;
+  overlapMult: number;
+  scoutMult:   number;
+}
+
+export interface MediumHeatmapConfig {
+  overlapBase: number;
+}
+
+export const DEFAULT_EXPERT_CONFIG: ExpertHeatmapConfig = {
+  overlapBase: 4,
+  overlapMult: 2,
+  scoutMult:   2,
+};
+export const DEFAULT_MEDIUM_CONFIG: MediumHeatmapConfig = { overlapBase: 4 };
+
 export interface HeatmapResult {
   heatmap: number[][];
   rawHeatmap: number[][];

@@ -30,6 +30,10 @@ import {
   MaxTargeting,
   RandomPlacementStrategy,
   AiParamSchema,
+  ExpertHeatmapConfig,
+  MediumHeatmapConfig,
+  DEFAULT_EXPERT_CONFIG,
+  DEFAULT_MEDIUM_CONFIG,
 } from './ai-base';
 import { EXPERIMENTS } from './ai-experiments';
 
@@ -40,6 +44,8 @@ export type {
   HeatmapStrategy, 
   PlacementStrategy,
   AiParamSchema,
+  ExpertHeatmapConfig,
+  MediumHeatmapConfig,
 };
 export { 
   AIVariant, 
@@ -124,6 +130,8 @@ class FlatHeatmap implements HeatmapStrategy {
 }
 
 class MediumHeatmap implements HeatmapStrategy {
+  constructor(private readonly cfg: MediumHeatmapConfig = DEFAULT_MEDIUM_CONFIG) {}
+
   generate(board: Board, activeShipNames: string[]): RawHeatmapResult {
     const rawHeatmap = createHeatmap(0);
     const unsunkHits = getUnsunkHits(board);
@@ -157,7 +165,7 @@ class MediumHeatmap implements HeatmapStrategy {
 
             if (!valid) continue;
 
-            const weight = 4 ** overlaps;
+            const weight = this.cfg.overlapBase ** overlaps;
 
             for (const coord of cells) {
               const [cx, cy] = fromCoord(coord);
@@ -174,6 +182,8 @@ class MediumHeatmap implements HeatmapStrategy {
 }
 
 class ExpertHeatmap implements HeatmapStrategy {
+  constructor(private readonly cfg: ExpertHeatmapConfig = DEFAULT_EXPERT_CONFIG) {}
+
   generate(board: Board, activeShipNames: string[]): RawHeatmapResult {
     const rawHeatmap = createHeatmap(0);
     const unsunkHits = getUnsunkHits(board);
@@ -191,7 +201,8 @@ class ExpertHeatmap implements HeatmapStrategy {
 
     activeShipNames.forEach((shipName) => {
       const size = getShipSize(shipName);
-      const threatMultiplier = size === maxActiveSize ? 2 : 1;
+      const threatMult = size === maxActiveSize ? this.cfg.overlapMult : 1;
+      const scoutW     = size === maxActiveSize ? this.cfg.scoutMult   : 1;
 
       for (let y = 0; y < BOARD_SIZE; y += 1) {
         for (let x = 0; x < BOARD_SIZE; x += 1) {
@@ -225,10 +236,10 @@ class ExpertHeatmap implements HeatmapStrategy {
               const remWounds = new Set([...unsunkHits].filter((w) => !covered.has(w)));
               const remShips = activeShipNames.filter((s) => s !== shipName);
               if (remainderIsValid(board, remWounds, remShips, covered)) {
-                threat = threatMultiplier * 4 ** overlaps;
+                threat = threatMult * this.cfg.overlapBase ** overlaps;
               }
             } else if (!isScoutingRedundant) {
-              threat = threatMultiplier;
+              threat = scoutW;
             }
 
             if (threat > 0) {
@@ -260,9 +271,16 @@ class NoviceAI extends AIVariant {
 }
 
 class MediumAI extends AIVariant {
-  static paramSchema: AiParamSchema = {};
+  static paramSchema: AiParamSchema = {
+    overlapBase: { type: 'number', default: 4, description: 'Base of overlap boon (base^overlaps)' },
+  };
 
-  protected readonly heatmapStrategy = new MediumHeatmap();
+  protected readonly heatmapStrategy: HeatmapStrategy;
+
+  constructor(cfg?: Partial<MediumHeatmapConfig>) {
+    super();
+    this.heatmapStrategy = new MediumHeatmap({ ...DEFAULT_MEDIUM_CONFIG, ...cfg });
+  }
 
   private readonly targeting = new HeatmapTargeting(false, false);
 
@@ -272,9 +290,18 @@ class MediumAI extends AIVariant {
 }
 
 class ExpertAI extends AIVariant {
-  static paramSchema: AiParamSchema = {};
+  static paramSchema: AiParamSchema = {
+    overlapBase: { type: 'number', default: 4, description: 'Base of overlap boon (base^overlaps)' },
+    overlapMult: { type: 'number', default: 2, description: 'Biggest-ship multiplier when covering a wound' },
+    scoutMult:   { type: 'number', default: 2, description: 'Biggest-ship multiplier when scouting (no wounds)' },
+  };
 
-  protected readonly heatmapStrategy = new ExpertHeatmap();
+  protected readonly heatmapStrategy: HeatmapStrategy;
+
+  constructor(cfg?: Partial<ExpertHeatmapConfig>) {
+    super();
+    this.heatmapStrategy = new ExpertHeatmap({ ...DEFAULT_EXPERT_CONFIG, ...cfg });
+  }
 
   private readonly targeting = new HeatmapTargeting(false, true);
 
@@ -287,7 +314,7 @@ class ExpertAI extends AIVariant {
 export class AI {
   private readonly variant: AIVariant;
 
-  constructor(variant: AIVariants = 'expert') {
+  constructor(variant: AIVariants = 'expert', config?: Record<string, number | boolean>) {
     if (EXPERIMENTS[variant]) {
       this.variant = EXPERIMENTS[variant];
       return;
@@ -298,10 +325,10 @@ export class AI {
         this.variant = new NoviceAI();
         break;
       case 'medium':
-        this.variant = new MediumAI();
+        this.variant = new MediumAI(config as Partial<MediumHeatmapConfig>);
         break;
       case 'expert':
-        this.variant = new ExpertAI();
+        this.variant = new ExpertAI(config as Partial<ExpertHeatmapConfig>);
         break;
       default:
         this.variant = new ExpertAI();
