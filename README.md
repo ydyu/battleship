@@ -1,30 +1,25 @@
-# Battleship with Special Shot Patterns
+# Battleship
 
-This is a variant of the classic Battleship game where each ship provides a unique firing pattern. As long as a ship is afloat, you can use its special ability.
+A terminal Battleship game focused on pattern-based targeting and AI simulation.
 
-## Shot Patterns
+### Key Features
+- **Unique Shot Patterns**: Each ship fires in a different shape. The Carrier hits a cross, while the Submarine fires in a straight line.
+- **Tactical Heatmaps**: View a live probability map while playing. It calculates the most likely ship locations based on current board state.
+- **AI Simulation**: Run hundreds of games in seconds to compare AI strategies or test specific seeds.
+- **Web Version**: Play a visual version of the game at [ydyu.github.io/battleship.html](https://ydyu.github.io/battleship.html).
 
-- **Carrier**: "X" pattern (5 squares)
-- **Battleship**: 2x2 square (4 squares)
-- **Submarine**: 3-peg horizontal line (3 squares)
-- **Destroyer**: 3-peg vertical line (3 squares)
-- **Patrol Boat**: Single shot (1 square)
+### How to Play
+- **Launch**: Run `npx tsx game.ts`.
+- **Target**: Type a ship number and coordinate (e.g., `1 A5`).
+- **Preview**: View the highlighted hit pattern on the board before pressing Enter to fire.
+- **Analyze**: Toggle the heatmap with `h` or view shot patterns with `?`.
+- **Watch**: Replay AI matches in slow motion with `npx tsx game.ts --watch`.
 
-## Project Structure
+### Advanced Usage
+Run `npx tsx game.ts --help` or `npx tsx sim.ts --help` to see all parameters for seeding, mirroring, and AI configuration.
 
-- `sim.py`: A simulation harness to test game balance and AI performance.
-- `game.py`: Interactive game implementation.
-
-## How to Run
-
-### Interactive Game
-
+### Simulations
+Use `sim.ts` to benchmark AI variants:
 ```bash
-python game.py
-```
-
-### Simulation
-
-```bash
-python sim.py
+npx tsx sim.ts --sideA medium --sideB expert --games 100
 ```
