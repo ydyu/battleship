@@ -1,5 +1,5 @@
-import { AI } from './src/ai';
-import { BattleshipMatch, Board, SHIP_TYPES, SHIP_NAMES } from './src/engine';
+import { AI, AIVariants } from './src/ai';
+import { BattleshipMatch, Board, SHIP_TYPES, SHIP_NAMES, AttackResult } from './src/engine';
 import { mulberry32, type RngFn } from './src/ai-utils';
 import {
   VALID_VARIANTS,
@@ -9,6 +9,44 @@ import {
   printSchema,
   parseCommonArgs,
 } from './src/cli';
+
+const shipAbbr = (name: string): string => {
+  switch (name) {
+    case 'Carrier': return 'Car';
+    case 'Battleship': return 'Bat';
+    case 'Destroyer': return 'Des';
+    case 'Submarine': return 'Sub';
+    case 'PatrolBoat': return 'Pat';
+    case 'None': return '-';
+    default: return name;
+  }
+};
+
+const analyzeAttack = (attack: AttackResult, enemyBoard: Board): string => {
+  if (attack.ship === 'None') return '-';
+  const parts: string[] = [];
+  parts.push(`hits: ${attack.hits}`);
+
+  const hurtShips = new Set<string>();
+  for (const coord of attack.impactCells) {
+    for (const [shipName, coords] of Object.entries(enemyBoard.shipLayouts)) {
+      if (coords.includes(coord)) {
+        if (!attack.sunkShips.includes(shipName)) {
+          hurtShips.add(shipName);
+        }
+      }
+    }
+  }
+
+  if (attack.sunkShips.length > 0) {
+    parts.push(`sunk: ${attack.sunkShips.map(s => shipAbbr(s)).join(',')}`);
+  }
+  if (hurtShips.size > 0) {
+    parts.push(`hurt: ${Array.from(hurtShips).map(s => shipAbbr(s)).join(',')}`);
+  }
+
+  return `[${parts.join(' | ')}]`;
+};
 
 const printHelp = () => {
   const variants = VALID_VARIANTS.join('|');
@@ -138,10 +176,21 @@ const runMatch = (
     }
 
     if (verbose) {
-      console.log(
-        `Round ${match.round}: sideA ${moveA.ship} @ (${moveA.x},${moveA.y}) => ${result.attackA.hits} hits | ` +
-          `sideB ${moveB.ship} @ (${moveB.x},${moveB.y}) => ${result.attackB.hits} hits`,
-      );
+      const tagA = analyzeAttack(result.attackA, match.boardB);
+      const tagB = analyzeAttack(result.attackB, match.boardA);
+      const roundStr = `[${match.round.toString().padStart(2)}]`;
+      const moveAStr = `A: ${shipAbbr(moveA.ship)} (${moveA.x},${moveA.y})`;
+      const moveBStr = `B: ${shipAbbr(moveB.ship)} (${moveB.x},${moveB.y})`;
+
+      const termWidth = process.stdout.columns || 80;
+      if (termWidth < 100) {
+        console.log(`${roundStr} ${moveAStr.padEnd(13)} => ${tagA}`);
+        console.log(`     ${moveBStr.padEnd(13)} => ${tagB}`);
+      } else {
+        console.log(
+          `${roundStr} ${moveAStr.padEnd(13)} => ${tagA.padEnd(40)} | ${moveBStr.padEnd(13)} => ${tagB}`,
+        );
+      }
     }
   }
 
@@ -237,7 +286,6 @@ const main = () => {
   }
 
   console.log(`Simulation: ${sideA} (A) vs ${sideB} (B)`);
-  console.log(`Mode: SIMULTANEOUS TURNS`);
   if (isSeeded) console.log(`Seed: ${seed ?? '(fleet=' + fleetSeed + ', move=' + moveSeed + ')'}`);
   console.log(`Running ${games} games...`);
 
@@ -329,9 +377,10 @@ const main = () => {
 
     const progressInterval = Math.max(1, Math.floor(games / 10));
     if ((i + 1) % progressInterval === 0 || i + 1 === games) {
-      console.log(` Progress: ${i + 1}/${games}...`);
+      process.stdout.write(`\r Progress: ${i + 1}/${games}...`);
     }
   }
+  process.stdout.write('\r' + ' '.repeat(30) + '\r'); // Clear progress line
 
   const getStats = (rounds: number[]) => {
     if (rounds.length === 0) return { avg: 'N/A', min: 'N/A', max: 'N/A' };
@@ -348,37 +397,31 @@ const main = () => {
     const count = metrics.length;
     const avgExtra = (metrics.reduce((s, m) => s + m.extraRounds, 0) / count).toFixed(1);
     const avgHP = (metrics.reduce((s, m) => s + m.endState.totalHP, 0) / count).toFixed(1);
-    const avgUntouched = (metrics.reduce((s, m) => s + m.endState.untouchedShips, 0) / count).toFixed(1);
-    const avgWounded = (metrics.reduce((s, m) => s + m.endState.woundedShips, 0) / count).toFixed(1);
-    return `+${avgExtra}rd, ${avgHP}HP left (${avgUntouched} untouched, ${avgWounded} wounded) avg`;
+    const avgFull = (metrics.reduce((s, m) => s + m.endState.untouchedShips, 0) / count).toFixed(1);
+    const avgHurt = (metrics.reduce((s, m) => s + m.endState.woundedShips, 0) / count).toFixed(1);
+    return `+${avgExtra}rd, ${avgHP} HP (${avgFull} full, ${avgHurt} hurt) avg`;
   };
 
-  console.log('\n' + '='.repeat(40));
+  console.log('='.repeat(40));
   console.log('SIMULATION RESULTS');
   console.log('='.repeat(40));
 
   const statsA = getStats(summary.sideA.rounds);
+  const winRateA = ((summary.sideA.wins / games) * 100).toFixed(1);
   console.log(`Side A (${sideA.toUpperCase()}):`);
-  console.log(`  Wins:      ${summary.sideA.wins} (${((summary.sideA.wins / games) * 100).toFixed(1)}%)`);
-  console.log(`  Avg Rounds: ${statsA.avg}`);
-  if (summary.sideA.rounds.length > 0) {
-    console.log(`  Min/Max:   ${statsA.min} / ${statsA.max}`);
-  }
+  console.log(`  Wins: ${summary.sideA.wins} (${winRateA}%) | Avg Rd: ${statsA.avg} | Min/Max: ${statsA.min}/${statsA.max}`);
   console.log(`  When Lost: ${getLossStats(summary.sideA.lossMetrics)}`);
 
   const statsB = getStats(summary.sideB.rounds);
+  const winRateB = ((summary.sideB.wins / games) * 100).toFixed(1);
   console.log(`\nSide B (${sideB.toUpperCase()}):`);
-  console.log(`  Wins:      ${summary.sideB.wins} (${((summary.sideB.wins / games) * 100).toFixed(1)}%)`);
-  console.log(`  Avg Rounds: ${statsB.avg}`);
-  if (summary.sideB.rounds.length > 0) {
-    console.log(`  Min/Max:   ${statsB.min} / ${statsB.max}`);
-  }
+  console.log(`  Wins: ${summary.sideB.wins} (${winRateB}%) | Avg Rd: ${statsB.avg} | Min/Max: ${statsB.min}/${statsB.max}`);
   console.log(`  When Lost: ${getLossStats(summary.sideB.lossMetrics)}`);
 
   if (summary.draw.count > 0) {
     const statsDraw = getStats(summary.draw.rounds);
-    console.log(`\nDraws:       ${summary.draw.count} (${((summary.draw.count / games) * 100).toFixed(1)}%)`);
-    console.log(`  Avg Rounds: ${statsDraw.avg}`);
+    const drawRate = ((summary.draw.count / games) * 100).toFixed(1);
+    console.log(`\nDraws: ${summary.draw.count} (${drawRate}%) | Avg Rd: ${statsDraw.avg}`);
   }
 
   const allRounds = [...summary.sideA.rounds, ...summary.sideB.rounds, ...summary.draw.rounds];
@@ -425,8 +468,9 @@ const main = () => {
           mirror ? ' --mirror' : ''
         }`;
         const es = entry.endState;
-        const metrics = `(+${entry.extraRounds}rd, ${es.totalHP}HP left (${es.untouchedShips} untouched, ${es.woundedShips} wounded))`;
-        console.log(`  ${kind}  game ${entry.game.toString().padEnd(3)} ${metrics.padEnd(45)}  →  ${replay}`);
+        const metrics = `[+${entry.extraRounds}rd, ${es.totalHP} HP (${es.untouchedShips} full, ${es.woundedShips} hurt)]`;
+        console.log(`  ${kind.padEnd(8)} game ${entry.game.toString().padEnd(3)} ${metrics}`);
+        console.log(`    -> ${replay}`);
       }
     };
     printNotable('sideA', lossesA);

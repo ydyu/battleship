@@ -209,7 +209,12 @@ const runWatchMode = async (
     if (!auto) {
       let advancing = false;
       while (!advancing) {
-        const key = (await rl.question('\n[Enter]=Fire, h=Heat, q=Quit: ')).trim().toLowerCase();
+        let key: string;
+        try {
+          key = (await rl.question('\n[Enter]=Fire, h=Heat, q=Quit: ')).trim().toLowerCase();
+        } catch (e) {
+          process.exit(0);
+        }
         if (key === 'q') { quit = true; advancing = true; }
         else if (key === 'h') { showHeatmap = !showHeatmap; renderState(1); }
         else { advancing = true; }
@@ -226,7 +231,12 @@ const runWatchMode = async (
     if (!auto && !match.isGameOver) {
       let advancing = false;
       while (!advancing) {
-        const key = (await rl.question('\n[Enter]=Next, h=Heat, q=Quit: ')).trim().toLowerCase();
+        let key: string;
+        try {
+          key = (await rl.question('\n[Enter]=Next, h=Heat, q=Quit: ')).trim().toLowerCase();
+        } catch (e) {
+          process.exit(0);
+        }
         if (key === 'q') { quit = true; advancing = true; }
         else if (key === 'h') { showHeatmap = !showHeatmap; renderState(2); }
         else { advancing = true; }
@@ -271,9 +281,18 @@ const getPlayerMove = async (
 
     const prompt = pending
       ? `Preview ${pending.ship} at ${formatCoord(pending.x, pending.y)}. [Enter]=FIRE, or new CMD: `
-      : `Ships: ${shipList}\nEnter CMD (e.g. '1 A5', 'h' for heatmap, '?' for help): `;
+      : `Ships: ${shipList}\nEnter CMD (e.g. '1 A5', 'h' for heatmap, 'q' for quit, '?' for help): `;
 
-    const inputRaw = (await rl.question(`\n${prompt}`)).trim();
+    let inputRaw: string;
+    try {
+      inputRaw = (await rl.question(`\n${prompt}`)).trim();
+    } catch (e) {
+      process.exit(0);
+    }
+
+    if (inputRaw.toLowerCase() === 'q') {
+      process.exit(0);
+    }
 
     if (inputRaw === '' && pending) {
       return pending;
