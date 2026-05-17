@@ -29,7 +29,8 @@ const analyzeAttack = (attack: AttackResult, enemyBoard: Board): string => {
 
   const hurtShips = new Set<string>();
   for (const coord of attack.impactCells) {
-    for (const [shipName, coords] of Object.entries(enemyBoard.shipLayouts)) {
+    for (const shipName of Object.keys(enemyBoard.activeShips)) {
+      const coords = enemyBoard.activeShips[shipName];
       if (coords.includes(coord)) {
         if (!attack.sunkShips.includes(shipName)) {
           hurtShips.add(shipName);
@@ -58,6 +59,7 @@ const printHelp = () => {
     `  --sideB <variant>        AI for side B (default: expert)`,
     '  --games <n>             Number of games to simulate (default: 1)',
     '  --verbose               Print round-by-round detail',
+    '  --full-completion       Play every game until both sides are sunk (needed for extraRounds stats)',
     '',
     '  --seed <n>              Seed entire run; game i uses fleet=n+i*2, move=n+i*2+1',
     '  --fleet-seed <n>        Fix both sides to same fleet positions every game (intentional',
@@ -108,6 +110,7 @@ const runMatch = (
   sideAVariant: AIVariants,
   sideBVariant: AIVariants,
   verbose: boolean,
+  fullCompletion: boolean,
   rngFleetA?: RngFn,
   rngFleetB?: RngFn,
   rngMoveA?: RngFn,
@@ -128,7 +131,7 @@ const runMatch = (
   let firstWinnerId: 'sideA' | 'sideB' | 'draw' | null = null;
   let endState: MatchEndState | null = null;
 
-  while ((roundsA === null || roundsB === null) && match.round < 100) {
+  while ((fullCompletion ? (roundsA === null || roundsB === null) : !match.isGameOver) && match.round < 100) {
     const moveA = roundsA === null
       ? sideA.selectMove(match.boardB, match.boardA.getActiveShipNames().length > 0 ? match.boardA.getActiveShipNames() : SHIP_NAMES, rngMoveA)
       : { x: 0, y: 0, ship: 'None', pattern: [] };
@@ -205,7 +208,7 @@ const runMatch = (
 
 const main = () => {
   const options = parseCommonArgs(process.argv.slice(2));
-  const { sideA, sideB, games, verbose, seed, fleetSeed, moveSeed, game, mirror, varsA, varsB, listVars, help } = options;
+  const { sideA, sideB, games, verbose, fullCompletion, seed, fleetSeed, moveSeed, game, mirror, varsA, varsB, listVars, help } = options;
 
   if (help) {
     printHelp();
@@ -273,6 +276,7 @@ const main = () => {
       sideA,
       sideB,
       true,
+      fullCompletion,
       undefined,
       undefined,
       mulberry32(effectiveMoveSeed),
@@ -290,8 +294,8 @@ const main = () => {
   console.log(`Running ${games} games...`);
 
   const summary = {
-    sideA: { wins: 0, rounds: [] as number[], lossMetrics: [] as { extraRounds: number; endState: MatchEndState }[] },
-    sideB: { wins: 0, rounds: [] as number[], lossMetrics: [] as { extraRounds: number; endState: MatchEndState }[] },
+    sideA: { wins: 0, rounds: [] as number[], lossMetrics: [] as { extraRounds?: number; endState: MatchEndState }[] },
+    sideB: { wins: 0, rounds: [] as number[], lossMetrics: [] as { extraRounds?: number; endState: MatchEndState }[] },
     draw: { count: 0, rounds: [] as number[] },
   };
   type LossEntry = {
@@ -299,7 +303,7 @@ const main = () => {
     rounds: number;
     fleetSeed?: number;
     moveSeed?: number;
-    extraRounds: number;
+    extraRounds?: number;
     endState: MatchEndState;
   };
   const lossesA: LossEntry[] = []; // games sideA lost (sideB won)
@@ -330,6 +334,7 @@ const main = () => {
       sideA,
       sideB,
       verbose,
+      fullCompletion,
       rngFleetA,
       rngFleetB,
       rngMoveA,
@@ -340,7 +345,7 @@ const main = () => {
       placedB,
     );
 
-    const mkEntry = (r: number, extraRounds: number, endState: MatchEndState): LossEntry | null =>
+    const mkEntry = (r: number, extraRounds: number | undefined, endState: MatchEndState): LossEntry | null =>
       isSeeded
         ? {
             game: i,
@@ -355,8 +360,8 @@ const main = () => {
     if (result.winnerId === 'sideA') {
       summary.sideA.wins += 1;
       summary.sideA.rounds.push(result.roundsA!);
-      if (result.roundsB !== null && result.endState) {
-        const extraRounds = result.roundsB - result.roundsA!;
+      if (result.endState) {
+        const extraRounds = result.roundsB !== null ? result.roundsB - result.roundsA! : undefined;
         summary.sideB.lossMetrics.push({ extraRounds, endState: result.endState });
         const e = mkEntry(result.roundsA!, extraRounds, result.endState);
         if (e) lossesB.push(e);
@@ -364,8 +369,8 @@ const main = () => {
     } else if (result.winnerId === 'sideB') {
       summary.sideB.wins += 1;
       summary.sideB.rounds.push(result.roundsB!);
-      if (result.roundsA !== null && result.endState) {
-        const extraRounds = result.roundsA - result.roundsB!;
+      if (result.endState) {
+        const extraRounds = result.roundsA !== null ? result.roundsA - result.roundsB! : undefined;
         summary.sideA.lossMetrics.push({ extraRounds, endState: result.endState });
         const e = mkEntry(result.roundsB!, extraRounds, result.endState);
         if (e) lossesA.push(e);
@@ -392,14 +397,15 @@ const main = () => {
     };
   };
 
-  const getLossStats = (metrics: { extraRounds: number; endState: MatchEndState }[]) => {
+  const getLossStats = (metrics: { extraRounds?: number; endState: MatchEndState }[]) => {
     if (metrics.length === 0) return 'N/A';
     const count = metrics.length;
-    const avgExtra = (metrics.reduce((s, m) => s + m.extraRounds, 0) / count).toFixed(1);
+    const hasExtra = metrics[0].extraRounds !== undefined;
+    const avgExtra = hasExtra ? `+${(metrics.reduce((s, m) => s + (m.extraRounds ?? 0), 0) / count).toFixed(1)}rd, ` : '';
     const avgHP = (metrics.reduce((s, m) => s + m.endState.totalHP, 0) / count).toFixed(1);
     const avgFull = (metrics.reduce((s, m) => s + m.endState.untouchedShips, 0) / count).toFixed(1);
     const avgHurt = (metrics.reduce((s, m) => s + m.endState.woundedShips, 0) / count).toFixed(1);
-    return `+${avgExtra}rd, ${avgHP} HP (${avgFull} full, ${avgHurt} hurt) avg`;
+    return `${avgExtra}${avgHP} HP (${avgFull} full, ${avgHurt} hurt) avg`;
   };
 
   console.log('='.repeat(40));
@@ -468,7 +474,8 @@ const main = () => {
           mirror ? ' --mirror' : ''
         }`;
         const es = entry.endState;
-        const metrics = `[+${entry.extraRounds}rd, ${es.totalHP} HP (${es.untouchedShips} full, ${es.woundedShips} hurt)]`;
+        const extraStr = entry.extraRounds !== undefined ? `+${entry.extraRounds}rd, ` : '';
+        const metrics = `[${extraStr}${es.totalHP} HP (${es.untouchedShips} full, ${es.woundedShips} hurt)]`;
         console.log(`  ${kind.padEnd(8)} game ${entry.game.toString().padEnd(3)} ${metrics}`);
         console.log(`    -> ${replay}`);
       }

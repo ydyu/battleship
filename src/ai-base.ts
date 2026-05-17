@@ -73,7 +73,6 @@ export class RandomPlacementStrategy implements PlacementStrategy {
 
 export class HeatmapTargeting {
   constructor(
-    private readonly useParityCheck: boolean,
     private readonly testAllShips: boolean,
   ) {}
 
@@ -107,10 +106,6 @@ export class HeatmapTargeting {
               }
             }
           });
-
-          if (this.useParityCheck && unsunkHits.size === 0 && (x + y) % 2 === 0) {
-            score *= 2;
-          }
 
           if (score > globalBestScore) {
             globalBestScore = score;

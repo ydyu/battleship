@@ -1,8 +1,67 @@
 import { describe, expect, it } from 'vitest';
 import { AI, placeFleetRandomly, MaxTargeting } from './ai';
 import { Board, SHIPS, BattleshipMatch } from './engine';
+import { EXPERIMENTS } from './ai-experiments';
 
 describe('ai', () => {
+  describe('HailMaryAI', () => {
+    const HailMaryAI = EXPERIMENTS.hailmary;
+
+    it('triggers Hail Mary mode when my fleet ratio is below threshold', () => {
+      const ai = new HailMaryAI({ hailMaryThreshold: 0.7 });
+      const myActiveShips = ['PatrolBoat']; // 2 cells
+      
+      const enemyBoard = new Board();
+      // 5+4+3+3 = 15 cells (more than 2/0.7 = 2.85)
+      enemyBoard.placeShip('Carrier', 0, 0, 'horizontal');
+      enemyBoard.placeShip('Battleship', 0, 1, 'horizontal');
+      enemyBoard.placeShip('Submarine', 0, 2, 'horizontal');
+      enemyBoard.placeShip('Destroyer', 0, 3, 'horizontal');
+
+      const move = ai.selectMove(enemyBoard, myActiveShips);
+      expect(move).toBeDefined();
+      expect(myActiveShips).toContain(move.ship);
+    });
+
+    it('does NOT trigger Hail Mary mode when my fleet ratio is above threshold', () => {
+      const ai = new HailMaryAI({ hailMaryThreshold: 0.1 });
+      const myActiveShips = ['Carrier', 'Battleship', 'Submarine', 'Destroyer', 'PatrolBoat']; // 17 cells
+      
+      const enemyBoard = new Board();
+      enemyBoard.placeShip('PatrolBoat', 0, 0, 'horizontal'); // 2 cells
+      
+      const move = ai.selectMove(enemyBoard, myActiveShips);
+      expect(move).toBeDefined();
+      expect(myActiveShips).toContain(move.ship);
+    });
+
+    it('does NOT trigger Hail Mary mode when at parity', () => {
+      const ai = new HailMaryAI({ hailMaryThreshold: 0.7 });
+      const myActiveShips = ['Carrier', 'Battleship', 'Submarine', 'Destroyer', 'PatrolBoat'];
+      
+      const enemyBoard = new Board();
+      enemyBoard.placeShip('Carrier', 0, 0, 'horizontal');
+      enemyBoard.placeShip('Battleship', 0, 1, 'horizontal');
+      enemyBoard.placeShip('Submarine', 0, 2, 'horizontal');
+      enemyBoard.placeShip('Destroyer', 0, 3, 'horizontal');
+      enemyBoard.placeShip('PatrolBoat', 0, 4, 'horizontal');
+      
+      const move = ai.selectMove(enemyBoard, myActiveShips);
+      expect(move).toBeDefined();
+      expect(myActiveShips).toContain(move.ship);
+    });
+    
+    it('correctly calculates weighted fleet health', () => {
+      const ai = new HailMaryAI();
+      const getHealth = (ai as any).getWeightedFleetHealth.bind(ai);
+      
+      expect(getHealth(['Carrier'])).toBe(5);
+      expect(getHealth(['Carrier', 'PatrolBoat'])).toBe(7);
+      expect(getHealth(['Submarine', 'Destroyer'])).toBe(6);
+      expect(getHealth([])).toBe(0);
+    });
+  });
+
   describe('MaxTargeting', () => {
     it('doubles the contribution of max value cells', () => {
       const board = new Board();

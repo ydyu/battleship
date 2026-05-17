@@ -137,7 +137,7 @@ class HailMaryAI extends AIVariant {
   static paramSchema: AiParamSchema = {
     overlapBase: { type: 'number', default: 3.0, description: 'Base of overlap boon (base^overlaps)' },
     biggestShipBias: { type: 'number', default: 2.0, description: 'Weight multiplier for biggest ship' },
-    hailMaryThreshold: { type: 'number', default: 12, description: 'Remaining cells threshold for Hail Mary mode' },
+    hailMaryThreshold: { type: 'number', default: 0.7, description: 'Relative ratio threshold (my cells / enemy cells) for Hail Mary mode' },
     killCapital: { type: 'number', default: 200.0, description: 'Flat weight for killing big ships in Hail Mary' },
     searchCapital: { type: 'number', default: 10.0, description: 'Flat weight for searching big ships in Hail Mary' },
     killSmall: { type: 'number', default: 1.0, description: 'Flat weight for killing small ships in Hail Mary' },
@@ -164,13 +164,18 @@ class HailMaryAI extends AIVariant {
     });
   }
 
-  private readonly targeting = new HeatmapTargeting(false, true);
+  private readonly targeting = new HeatmapTargeting(true);
+
+  private getWeightedFleetHealth(activeShips: string[]): number {
+    return activeShips.reduce((sum, name) => sum + (SHIP_INDEX[name]?.size ?? 0), 0);
+  }
 
   selectMove(enemyBoard: Board, myActiveShips: string[], rng?: RngFn): Move {
-    const remainingCells = myActiveShips.reduce((sum, name) => sum + (SHIP_INDEX[name]?.size ?? 0), 0);
-    const threshold = this.getConfigVal('hailMaryThreshold', 12);
+    const myCells = this.getWeightedFleetHealth(myActiveShips);
+    const enemyCells = this.getWeightedFleetHealth(enemyBoard.getActiveShipNames());
+    const threshold = this.getConfigVal('hailMaryThreshold', 0.7);
 
-    if (remainingCells <= threshold) {
+    if (myCells / enemyCells <= threshold) {
       // HAIL MARY MODE
       const strategy = new HailMaryHeatmap({
         overlapBase: this.getConfigVal('overlapBase', 3.0),
@@ -320,7 +325,7 @@ class LegacyAI1 extends AIVariant {
   static paramSchema: AiParamSchema = {};
   protected readonly heatmapStrategy = new LegacyHeatmap1();
 
-  private readonly targeting = new HeatmapTargeting(true, true);
+  private readonly targeting = new HeatmapTargeting(true);
 
   selectMove(enemyBoard: Board, myActiveShips: string[], rng?: RngFn): Move {
     return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy, rng);
@@ -404,7 +409,7 @@ class Big1Heatmap implements HeatmapStrategy {
 class Big2AI extends AIVariant {
   static paramSchema: AiParamSchema = {};
   protected readonly heatmapStrategy = new Big1Heatmap();
-  private readonly targeting = new HeatmapTargeting(false, true);
+  private readonly targeting = new HeatmapTargeting(true);
 
   selectMove(enemyBoard: Board, myActiveShips: string[], rng?: RngFn): Move {
     return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy, rng);

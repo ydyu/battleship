@@ -282,7 +282,7 @@ class MediumAI extends AIVariant {
     this.heatmapStrategy = new MediumHeatmap({ ...DEFAULT_MEDIUM_CONFIG, ...cfg });
   }
 
-  private readonly targeting = new HeatmapTargeting(false, false);
+  private readonly targeting = new HeatmapTargeting(false);
 
   selectMove(enemyBoard: Board, myActiveShips: string[], rng?: RngFn): Move {
     return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy, rng);
@@ -303,7 +303,7 @@ class ExpertAI extends AIVariant {
     this.heatmapStrategy = new ExpertHeatmap({ ...DEFAULT_EXPERT_CONFIG, ...cfg });
   }
 
-  private readonly targeting = new HeatmapTargeting(false, true);
+  private readonly targeting = new HeatmapTargeting(true);
 
   selectMove(enemyBoard: Board, myActiveShips: string[], rng?: RngFn): Move {
     return this.targeting.selectMove(enemyBoard, myActiveShips, this.heatmapStrategy, rng);
