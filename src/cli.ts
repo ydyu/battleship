@@ -219,6 +219,7 @@ export interface CommonArgs {
   auto: boolean;
   verbose: boolean;
   fullCompletion: boolean;
+  json: boolean;
   games: number;
   listVars?: string;
   unknown: string[];
@@ -238,6 +239,7 @@ export const parseCommonArgs = (argv: string[]): CommonArgs => {
     auto: false,
     verbose: false,
     fullCompletion: false,
+    json: false,
     games: 1,
     unknown: [],
   };
@@ -260,6 +262,7 @@ export const parseCommonArgs = (argv: string[]): CommonArgs => {
     else if (arg === '--auto') { options.auto = true; }
     else if (arg === '--verbose') { options.verbose = true; }
     else if (arg === '--full-completion') { options.fullCompletion = true; }
+    else if (arg === '--json') { options.json = true; }
     else if (arg === '--games') { options.games = Number(argv[i + 1] ?? options.games); i += 1; }
     else if (arg === '--list-vars') {
       const next = argv[i + 1];

@@ -208,7 +208,7 @@ const runMatch = (
 
 const main = () => {
   const options = parseCommonArgs(process.argv.slice(2));
-  const { sideA, sideB, games, verbose, fullCompletion, seed, fleetSeed, moveSeed, game, mirror, varsA, varsB, listVars, help } = options;
+  const { sideA, sideB, games, verbose, fullCompletion, seed, fleetSeed, moveSeed, game, mirror, varsA, varsB, listVars, help, json } = options;
 
   if (help) {
     printHelp();
@@ -267,15 +267,17 @@ const main = () => {
     const rngFleetB = mirror ? mulberry32(effectiveFleetSeed) : rngFleetA;
     const fleetA = aiA.placeFleet(undefined, rngFleetA);
     const fleetB = aiB.placeFleet(undefined, rngFleetB);
-    console.log(`Replaying game ${i} (seed=${seed}, fleetSeed=${effectiveFleetSeed}, moveSeed=${effectiveMoveSeed})`);
-    console.log(`${sideA} (A) vs ${sideB} (B)${mirror ? ' [MIRRORED]' : ''}`);
-    printFleet('sideA', fleetA);
-    printFleet('sideB', fleetB);
-    console.log('');
-    runMatch(
+    if (!json) {
+      console.log(`Replaying game ${i} (seed=${seed}, fleetSeed=${effectiveFleetSeed}, moveSeed=${effectiveMoveSeed})`);
+      console.log(`${sideA} (A) vs ${sideB} (B)${mirror ? ' [MIRRORED]' : ''}`);
+      printFleet('sideA', fleetA);
+      printFleet('sideB', fleetB);
+      console.log('');
+    }
+    const result = runMatch(
       sideA,
       sideB,
-      true,
+      !json && true,
       fullCompletion,
       undefined,
       undefined,
@@ -286,12 +288,17 @@ const main = () => {
       fleetA,
       fleetB,
     );
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+    }
     return;
   }
 
-  console.log(`Simulation: ${sideA} (A) vs ${sideB} (B)`);
-  if (isSeeded) console.log(`Seed: ${seed ?? '(fleet=' + fleetSeed + ', move=' + moveSeed + ')'}`);
-  console.log(`Running ${games} games...`);
+  if (!json) {
+    console.log(`Simulation: ${sideA} (A) vs ${sideB} (B)`);
+    if (isSeeded) console.log(`Seed: ${seed ?? '(fleet=' + fleetSeed + ', move=' + moveSeed + ')'}`);
+    console.log(`Running ${games} games...`);
+  }
 
   const summary = {
     sideA: { wins: 0, rounds: [] as number[], lossMetrics: [] as { extraRounds?: number; endState: MatchEndState }[] },
@@ -324,7 +331,7 @@ const main = () => {
     const placedA = aiA.placeFleet(undefined, rngFleetA);
     const placedB = aiB.placeFleet(undefined, rngFleetB);
 
-    if (verbose) {
+    if (verbose && !json) {
       console.log(`\n--- Game ${i} ---`);
       printFleet('sideA', placedA);
       printFleet('sideB', placedB);
@@ -333,7 +340,7 @@ const main = () => {
     const result = runMatch(
       sideA,
       sideB,
-      verbose,
+      verbose && !json,
       fullCompletion,
       rngFleetA,
       rngFleetB,
@@ -381,21 +388,54 @@ const main = () => {
     }
 
     const progressInterval = Math.max(1, Math.floor(games / 10));
-    if ((i + 1) % progressInterval === 0 || i + 1 === games) {
+    if (!json && ((i + 1) % progressInterval === 0 || i + 1 === games)) {
       process.stdout.write(`\r Progress: ${i + 1}/${games}...`);
     }
   }
-  process.stdout.write('\r' + ' '.repeat(30) + '\r'); // Clear progress line
+  if (!json) {
+    process.stdout.write('\r' + ' '.repeat(30) + '\r'); // Clear progress line
+  }
 
   const getStats = (rounds: number[]) => {
-    if (rounds.length === 0) return { avg: 'N/A', min: 'N/A', max: 'N/A' };
+    if (rounds.length === 0) return { avg: 0, min: 0, max: 0 };
     const sum = rounds.reduce((a, b) => a + b, 0);
     return {
-      avg: (sum / rounds.length).toFixed(2),
+      avg: Number((sum / rounds.length).toFixed(2)),
       min: Math.min(...rounds),
       max: Math.max(...rounds),
     };
   };
+
+  const statsA = getStats(summary.sideA.rounds);
+  const statsB = getStats(summary.sideB.rounds);
+  const statsDraw = getStats(summary.draw.rounds);
+
+  if (json) {
+    const output = {
+      sideA: {
+        variant: sideA,
+        vars: parsedVarsA,
+        wins: summary.sideA.wins,
+        winRate: Number(((summary.sideA.wins / games) * 100).toFixed(1)),
+        stats: statsA,
+      },
+      sideB: {
+        variant: sideB,
+        vars: parsedVarsB,
+        wins: summary.sideB.wins,
+        winRate: Number(((summary.sideB.wins / games) * 100).toFixed(1)),
+        stats: statsB,
+      },
+      draws: {
+        count: summary.draw.count,
+        rate: Number(((summary.draw.count / games) * 100).toFixed(1)),
+        stats: statsDraw,
+      },
+      games,
+    };
+    console.log(JSON.stringify(output, null, 2));
+    return;
+  }
 
   const getLossStats = (metrics: { extraRounds?: number; endState: MatchEndState }[]) => {
     if (metrics.length === 0) return 'N/A';
@@ -412,20 +452,17 @@ const main = () => {
   console.log('SIMULATION RESULTS');
   console.log('='.repeat(40));
 
-  const statsA = getStats(summary.sideA.rounds);
   const winRateA = ((summary.sideA.wins / games) * 100).toFixed(1);
   console.log(`Side A (${sideA.toUpperCase()}):`);
   console.log(`  Wins: ${summary.sideA.wins} (${winRateA}%) | Avg Rd: ${statsA.avg} | Min/Max: ${statsA.min}/${statsA.max}`);
   console.log(`  When Lost: ${getLossStats(summary.sideA.lossMetrics)}`);
 
-  const statsB = getStats(summary.sideB.rounds);
   const winRateB = ((summary.sideB.wins / games) * 100).toFixed(1);
   console.log(`\nSide B (${sideB.toUpperCase()}):`);
   console.log(`  Wins: ${summary.sideB.wins} (${winRateB}%) | Avg Rd: ${statsB.avg} | Min/Max: ${statsB.min}/${statsB.max}`);
   console.log(`  When Lost: ${getLossStats(summary.sideB.lossMetrics)}`);
 
   if (summary.draw.count > 0) {
-    const statsDraw = getStats(summary.draw.rounds);
     const drawRate = ((summary.draw.count / games) * 100).toFixed(1);
     console.log(`\nDraws: ${summary.draw.count} (${drawRate}%) | Avg Rd: ${statsDraw.avg}`);
   }
