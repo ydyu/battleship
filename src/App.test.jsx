@@ -37,12 +37,9 @@ describe('App module components', () => {
         showDebug
         activeHeatmap={{ heatmap }}
         highlightCoords={[]}
-        hoverCell={null}
         currentSetupShip={null}
         setupOrientation="horizontal"
         onCellClick={vi.fn()}
-        onCellMouseEnter={vi.fn()}
-        onCellMouseLeave={vi.fn()}
       />,
     );
 

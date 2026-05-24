@@ -10,3 +10,16 @@ body {
   margin: 0;
   background-color: #020617; /* slate-950 */
 }
+
+/* Preview overlay: animation runs continuously from page load on ALL cells.
+   Hidden cells (visibility:hidden) cost zero paint/composite but stay in sync.
+   Toggling to visible instantly reveals the cell at the correct animation phase. */
+.preview-overlay {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  visibility: hidden;
+  will-change: opacity;
+}
+
+.preview-overlay.preview-active {
+  visibility: visible;
+}

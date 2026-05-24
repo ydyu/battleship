@@ -334,7 +334,7 @@ const FleetPanel = ({
                 {Array.from({length: iconConfig.cols * iconConfig.rows}).map((_, i) => (
                   <div 
                     key={i} 
-                    className={`w-1.5 h-1.5 shrink-0 rounded-[1px] ${iconConfig.active.includes(i) ? (isSelected ? 'bg-cyan-400' : 'bg-slate-400') : 'bg-transparent'}`} 
+                    className={`w-1.5 h-1.5 shrink-0 rounded-none ${iconConfig.active.includes(i) ? (isSelected ? 'bg-cyan-400' : 'bg-slate-400') : 'bg-transparent'}`} 
                   />
                 ))}
               </div>
@@ -348,7 +348,7 @@ const FleetPanel = ({
   );
 };
 
-export const SetupControlsPanel = ({ currentSetupShip, setupOrientation, setSetupOrientation, setPlayerBoard, setHoverCell }) => {
+export const SetupControlsPanel = ({ currentSetupShip, setupOrientation, setSetupOrientation, setPlayerBoard }) => {
   return (
     <div className="w-full max-w-[340px] sm:max-w-[400px] mt-3 flex flex-col gap-2">
       
@@ -361,7 +361,7 @@ export const SetupControlsPanel = ({ currentSetupShip, setupOrientation, setSetu
             <div className="flex-1 flex justify-center items-center h-full">
               <div className={`flex gap-0.5 transition-transform duration-300 ease-in-out ${setupOrientation === 'vertical' ? 'rotate-90' : ''}`}>
                 {Array(currentSetupShip.size).fill(0).map((_, i) => (
-                  <div key={i} className="w-3 h-2 sm:w-4 sm:h-2.5 rounded-[2px] bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.6)]" />
+                  <div key={i} className="w-3 h-2 sm:w-4 sm:h-2.5 rounded-none bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.6)]" />
                 ))}
               </div>
             </div>
@@ -392,7 +392,6 @@ export const SetupControlsPanel = ({ currentSetupShip, setupOrientation, setSetu
         <button 
           onClick={() => {
             setPlayerBoard(createEmptyBoard());
-            setHoverCell(null);
           }} 
           className="flex-1 py-2.5 bg-slate-800 hover:bg-red-900/50 hover:border-red-800 border border-slate-700 text-white rounded-lg font-bold flex items-center justify-center gap-2 text-xs sm:text-sm transition-colors active:scale-95"
         >
@@ -403,7 +402,78 @@ export const SetupControlsPanel = ({ currentSetupShip, setupOrientation, setSetu
   );
 };
 
-export const GameBoard = ({
+const Cell = React.memo(({ 
+  x, y, coord, isFired, isHit, isSunk, isMiss, isTargetable, isPlayerHighlight, isAiHighlight, 
+  isPreview, isTargetOrigin, showDebug, heatRatio, displayScore, isScrubbing, isSetup, isEnemy,
+  onClick, onMouseEnter, onMouseLeave 
+}) => {
+  let zIndex = "z-0";
+  if (isHit || isSunk || isMiss || isPlayerHighlight || isAiHighlight || isPreview) {
+    zIndex = "z-20";
+  }
+
+  let cellClasses = `aspect-square rounded-none border flex items-center justify-center relative overflow-hidden ${zIndex} `;
+  
+  if (isSetup && !isEnemy) cellClasses += " hover:bg-slate-700 cursor-pointer";
+  if (isTargetable) cellClasses += " cursor-crosshair hover:bg-slate-700";
+
+  if (isSunk) cellClasses += " bg-red-950 border-red-900";
+  else if (isHit) cellClasses += " bg-red-500 border-red-600";
+  else cellClasses += " bg-slate-800 border-slate-700/50";
+
+  return (
+    <button 
+      style={{ 
+        gridColumn: x + 1, 
+        gridRow: y + 1, 
+        cursor: (isSetup && !isEnemy) ? 'pointer' : 'inherit' 
+      }} 
+      onMouseEnter={isSetup && !isEnemy ? () => onMouseEnter(x, y) : undefined}
+      onMouseLeave={isSetup && !isEnemy ? onMouseLeave : undefined}
+      onClick={() => onClick(x, y)}
+      disabled={isScrubbing || (!isSetup && isEnemy && !isTargetable) || (isSetup && isEnemy)}
+      className={cellClasses}
+    >
+      {isMiss && <div className="w-1.5 h-1.5 rounded-full bg-slate-400 pointer-events-none" />}
+      
+      {showDebug && heatRatio > 0 && !isFired && (
+        <div 
+          className="absolute inset-0 z-10 pointer-events-none flex items-center justify-center text-[9px] sm:text-[11px] font-bold text-orange-300"
+          style={{ backgroundColor: `rgba(249, 115, 22, ${heatRatio * 0.35})` }}
+        >
+          {displayScore}
+        </div>
+      )}
+
+      {isHit && !isSunk && <div className="absolute inset-0 flex items-center justify-center animate-pulse pointer-events-none"><Target className="w-1/2 h-1/2 text-white/90 drop-shadow-md" strokeWidth={3} /></div>}
+      {isSunk && <div className="absolute inset-0 flex items-center justify-center pointer-events-none"><Skull className="w-1/2 h-1/2 text-white/40 drop-shadow-md" strokeWidth={2} /></div>}
+
+      {isPlayerHighlight && (
+        <div className={`absolute inset-0 z-30 pointer-events-none ${
+          isScrubbing 
+            ? 'ring-2 ring-inset ring-cyan-400 bg-cyan-400/20' 
+            : 'border-2 border-dashed border-cyan-300 bg-cyan-400/15' 
+        }`} />
+      )}
+      
+      {isAiHighlight && (
+        <div className="absolute inset-0 z-40 pointer-events-none ring-2 ring-inset ring-yellow-400 bg-yellow-400/20" />
+      )}
+
+      <div className={`absolute inset-0 z-50 pointer-events-none border-2 preview-overlay ${
+        isPreview ? 'preview-active' : ''
+      } ${
+        isFired
+          ? 'border-slate-500/40 bg-transparent' 
+          : (isTargetOrigin 
+            ? 'bg-cyan-300/50 border-cyan-200' 
+            : 'bg-cyan-500/30 border-cyan-400/80')
+      }`} />
+    </button>
+  );
+});
+
+export const GameBoard = React.memo(({
   board,
   isEnemy,
   phase,
@@ -415,144 +485,126 @@ export const GameBoard = ({
   showDebug,
   activeHeatmap,
   highlightCoords,
-  hoverCell,
   currentSetupShip,
   setupOrientation,
-  onCellClick,
-  onCellMouseEnter,
-  onCellMouseLeave
+  onCellClick
 }) => {
   const isSetup = phase === 'setup';
-  const cells = [];
   const hulls = [];
+  const [localHoverCell, setLocalHoverCell] = useState(null);
 
-  let previewSet = new Set();
-  if (!isSetup && isEnemy && turn === 'player' && targetCell && !isScrubbing) {
-      const [hx, hy] = targetCell;
-      const pattern = SHOT_PATTERNS[selectedWeapon];
-      pattern.forEach(([dx, dy]) => {
-        const x = hx + dx;
-        const y = hy + dy;
-        if (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE) previewSet.add(`${x},${y}`);
-      });
-  }
+  // Stabilize callbacks to ensure Cell memoization works perfectly even on top-level state updates
+  const callbacksRef = useRef({ onCellClick });
+  useEffect(() => {
+    callbacksRef.current = { onCellClick };
+  });
+  const handleCellClick = useCallback((x, y) => callbacksRef.current.onCellClick?.(x, y), []);
+  const handleCellMouseEnter = useCallback((x, y) => setLocalHoverCell([x, y]), []);
+  const handleCellMouseLeave = useCallback(() => setLocalHoverCell(null), []);
 
-  for (let y = 0; y < BOARD_SIZE; y++) {
-    for (let x = 0; x < BOARD_SIZE; x++) {
-      const coord = `${x},${y}`;
-      const isFired = board.shotsFired.has(coord);
-      const isHit = board.hitsReceived.has(coord);
-      const isSunk = board.sunkCells.has(coord);
-      const isMiss = board.misses.has(coord);
-      const isTargetable = !isSetup && isEnemy && turn === 'player' && phase === 'battle' && !isScrubbing && board.canTargetCell(x, y, selectedWeapon);
-      
-      const isPlayerHighlight = isEnemy && highlightCoords.includes(coord);
-      const isAiHighlight = !isEnemy && highlightCoords.includes(coord);
-      
-      const heatRatio = activeHeatmap ? activeHeatmap.heatmap[x][y] : 0;
-      const displayScore = Math.round(heatRatio * 100);
-
-      let zIndex = "z-0";
-      if (isHit || isSunk || isMiss || isPlayerHighlight || isAiHighlight || previewSet.has(coord)) {
-        zIndex = "z-20";
-      }
-
-      let cellClasses = `aspect-square rounded-[2px] border flex items-center justify-center relative overflow-hidden transition-colors ${zIndex} `;
-      
-      if (isSetup && !isEnemy) cellClasses += " hover:bg-slate-700 cursor-pointer";
-      if (isTargetable) cellClasses += " cursor-crosshair hover:border-cyan-400/50";
-
-      if (isSunk) cellClasses += " bg-red-950 border-red-900";
-      else if (isHit) cellClasses += " bg-red-500 border-red-600";
-      else cellClasses += " bg-slate-800 border-slate-700/50";
-
-      cells.push(
-        <button 
-          key={coord}
-          style={{ gridColumn: x + 1, gridRow: y + 1 }} 
-          onMouseEnter={() => isSetup && !isEnemy && onCellMouseEnter && onCellMouseEnter([x, y])}
-          onMouseLeave={() => isSetup && !isEnemy && onCellMouseLeave && onCellMouseLeave()}
-          onClick={() => onCellClick(x, y)}
-          disabled={isScrubbing || (!isSetup && isEnemy && !board.canTargetCell(x, y, selectedWeapon)) || (isSetup && isEnemy)}
-          className={cellClasses}
-        >
-          {isMiss && <div className="w-1.5 h-1.5 rounded-full bg-slate-400 pointer-events-none" />}
-          
-          {showDebug && heatRatio > 0 && !isFired && (
-            <div 
-              className="absolute inset-0 z-10 pointer-events-none flex items-center justify-center text-[9px] sm:text-[11px] font-black text-orange-300 drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]"
-              style={{ backgroundColor: `rgba(249, 115, 22, ${heatRatio * 0.35})` }}
-            >
-              {displayScore}
-            </div>
-          )}
-
-          {isHit && !isSunk && <div className="absolute inset-0 flex items-center justify-center animate-pulse pointer-events-none"><Target className="w-1/2 h-1/2 text-white/90 drop-shadow-md" strokeWidth={3} /></div>}
-          {isSunk && <div className="absolute inset-0 flex items-center justify-center pointer-events-none"><Skull className="w-1/2 h-1/2 text-white/40 drop-shadow-md" strokeWidth={2} /></div>}
-
-          {isPlayerHighlight && (
-            <div className={`absolute inset-0 z-30 pointer-events-none ${
-              isScrubbing 
-                ? 'ring-2 ring-inset ring-cyan-400 bg-cyan-400/20 animate-pulse' 
-                : 'border-2 border-dashed border-cyan-300 bg-cyan-400/15' 
-            }`} />
-          )}
-          
-          {isAiHighlight && (
-            <div className="absolute inset-0 z-40 pointer-events-none ring-2 ring-inset ring-yellow-400 bg-yellow-400/20 animate-pulse" />
-          )}
-
-          {previewSet.has(coord) && (
-            <div className={`absolute inset-0 z-50 pointer-events-none border-2 ${
-              isFired
-                ? 'border-slate-500/40 bg-transparent' 
-                : (targetCell && targetCell[0] === x && targetCell[1] === y 
-                  ? 'bg-cyan-300/50 border-cyan-200 shadow-[0_0_15px_rgba(103,232,249,0.8)] animate-pulse' 
-                  : 'bg-cyan-500/30 border-cyan-400/80 animate-pulse')
-            }`} />
-          )}
-        </button>
-      );
+  const previewSet = useMemo(() => {
+    const set = new Set();
+    if (!isSetup && isEnemy && turn === 'player' && targetCell && !isScrubbing) {
+        const [hx, hy] = targetCell;
+        const pattern = SHOT_PATTERNS[selectedWeapon];
+        if (pattern) {
+          pattern.forEach(([dx, dy]) => {
+            const x = hx + dx;
+            const y = hy + dy;
+            if (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE) set.add(`${x},${y}`);
+          });
+        }
     }
-  }
+    return set;
+  }, [isSetup, isEnemy, turn, targetCell, isScrubbing, selectedWeapon]);
+
+
+  const cells = useMemo(() => {
+    const list = [];
+    for (let y = 0; y < BOARD_SIZE; y++) {
+      for (let x = 0; x < BOARD_SIZE; x++) {
+        const coord = `${x},${y}`;
+        const isFired = board.shotsFired.has(coord);
+        const heatRatio = activeHeatmap ? activeHeatmap.heatmap[x][y] : 0;
+        const isTargetable = !isSetup && isEnemy && turn === 'player' && phase === 'battle' && !isScrubbing && board.canTargetCell(x, y, selectedWeapon);
+        
+        list.push(
+          <Cell 
+            key={coord}
+            x={x} y={y} coord={coord}
+            isFired={isFired}
+            isHit={board.hitsReceived.has(coord)}
+            isSunk={board.sunkCells.has(coord)}
+            isMiss={board.misses.has(coord)}
+            isTargetable={isTargetable}
+            isPlayerHighlight={isEnemy && highlightCoords.includes(coord)}
+            isAiHighlight={!isEnemy && highlightCoords.includes(coord)}
+            isPreview={previewSet.has(coord)}
+            isTargetOrigin={targetCell && targetCell[0] === x && targetCell[1] === y}
+            showDebug={showDebug}
+            heatRatio={heatRatio}
+            displayScore={Math.round(heatRatio * 100)}
+            isScrubbing={isScrubbing}
+            isSetup={isSetup}
+            isEnemy={isEnemy}
+            onClick={handleCellClick}
+            onMouseEnter={handleCellMouseEnter}
+            onMouseLeave={handleCellMouseLeave}
+          />
+        );
+      }
+    }
+    return list;
+  }, [
+    board.shotsFired, board.hitsReceived, board.sunkCells, board.misses, board, // board changes
+    isEnemy, phase, turn, isScrubbing, selectedWeapon, 
+    showDebug, activeHeatmap, highlightCoords, previewSet, targetCell, isSetup,
+    handleCellClick, handleCellMouseEnter, handleCellMouseLeave
+  ]);
 
   // --- HULL RENDERING ---
-  Object.entries(board.shipLayouts).forEach(([shipName, coords]) => {
-    const isSunk = !board.activeShips[shipName];
-    const isVisible = !isEnemy || isSunk || winner !== null; 
+  const hullsList = useMemo(() => {
+    const list = [];
+    Object.entries(board.shipLayouts).forEach(([shipName, coords]) => {
+      const isSunk = !board.activeShips[shipName];
+      const isVisible = !isEnemy || isSunk || winner !== null; 
 
-    if (!isVisible) return;
+      if (!isVisible) return;
 
-    const xs = coords.map(c => parseInt(c.split(',')[0]));
-    const ys = coords.map(c => parseInt(c.split(',')[1]));
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
+      const xs = coords.map(c => parseInt(c.split(',')[0]));
+      const ys = coords.map(c => parseInt(c.split(',')[1]));
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
 
-    let hullStyle = "";
-    if (isSunk) {
-      hullStyle = "border-red-500/80 bg-red-500/20 shadow-[inset_0_0_15px_rgba(220,38,38,0.3)]";
-    } else if (!isEnemy) {
-      hullStyle = "border-emerald-500/60 bg-emerald-500/20 shadow-[inset_0_0_15px_rgba(16,185,129,0.3)]";
-    } else {
-      hullStyle = "border-cyan-500/40 bg-cyan-500/10 shadow-[inset_0_0_15px_rgba(6,182,212,0.1)]";
-    }
+      let hullStyle = "";
+      if (isSunk) {
+        hullStyle = "border-red-500/80 bg-red-500/20 shadow-[inset_0_0_15px_rgba(220,38,38,0.3)]";
+      } else if (!isEnemy) {
+        hullStyle = "border-emerald-500/60 bg-emerald-500/20 shadow-[inset_0_0_15px_rgba(16,185,129,0.3)]";
+      } else {
+        hullStyle = "border-cyan-500/40 bg-cyan-500/10 shadow-[inset_0_0_15px_rgba(6,182,212,0.1)]";
+      }
 
-    hulls.push(
-      <div
-        key={`hull-${shipName}`}
-        style={{
-          gridColumn: `${minX + 1} / ${maxX + 2}`,
-          gridRow: `${minY + 1} / ${maxY + 2}`
-        }}
-        className={`pointer-events-none z-30 m-[2px] rounded-full border-2 ${hullStyle} transition-all duration-500`}
-      />
-    );
-  });
+      list.push(
+        <div
+          key={`hull-${shipName}`}
+          style={{
+            gridColumn: `${minX + 1} / ${maxX + 2}`,
+            gridRow: `${minY + 1} / ${maxY + 2}`
+          }}
+          className={`pointer-events-none z-30 m-[2px] rounded-full border-2 ${hullStyle} transition-all duration-500`}
+        />
+      );
+    });
+    return list;
+  }, [board.shipLayouts, board.activeShips, isEnemy, winner]);
 
-  if (isSetup && hoverCell && currentSetupShip && !isEnemy) {
-    const [hx, hy] = hoverCell;
+  hulls.push(...hullsList);
+
+  if (isSetup && localHoverCell && currentSetupShip && !isEnemy) {
+    const [hx, hy] = localHoverCell;
     const preview = board.getPlacementPreview(currentSetupShip.name, hx, hy, setupOrientation);
 
     hulls.push(
@@ -562,23 +614,24 @@ export const GameBoard = ({
           gridColumn: `${preview.minX + 1} / ${preview.maxX + 2}`,
           gridRow: `${preview.minY + 1} / ${preview.maxY + 2}`
         }}
-        className={`pointer-events-none z-30 transition-all duration-75 border-2
+        className={`pointer-events-none z-30 border-2
           ${preview.valid 
             ? 'm-[2px] rounded-full border-dashed border-emerald-400 bg-emerald-400/30 shadow-[0_0_15px_rgba(52,211,153,0.4)]' 
-            : 'm-0 rounded-[2px] border-red-500 bg-red-500/40 shadow-none'}
+            : 'm-0 rounded-none border-red-500 bg-red-500/40 shadow-none'}
         `}
       />
     );
   }
 
+  const boardCursor = (!isSetup && isEnemy && turn === 'player' && phase === 'battle' && !isScrubbing) ? 'cursor-crosshair' : '';
+
   return (
-    <div className={`grid grid-cols-10 gap-0.5 p-1 bg-slate-900 rounded-lg shadow-xl shadow-black/20 w-full mx-auto border border-slate-800 max-w-[340px] sm:max-w-[400px] relative`}>
+    <div className={`grid grid-cols-10 gap-0.5 p-1 bg-slate-900 rounded-lg shadow-xl shadow-black/20 w-full mx-auto border border-slate-800 max-w-[340px] sm:max-w-[400px] relative ${boardCursor}`}>
       {cells}
       {hulls}
     </div>
   );
-};
-
+});
 const CombatFeed = ({ 
   phase, turn, winner, isScrubbing, displayLog, 
   isFeedExpanded, setIsFeedExpanded, maxRound, currentRound, 
@@ -797,7 +850,6 @@ export default function App() {
 
   // Setup / UI States
   const [setupOrientation, setSetupOrientation] = useState('horizontal');
-  const [hoverCell, setHoverCell] = useState(null);
   const [selectedWeapon, setSelectedWeapon] = useState('Carrier');
   const [targetCell, setTargetCell] = useState(null);
   const [isFeedExpanded, setIsFeedExpanded] = useState(false);
@@ -947,23 +999,22 @@ export default function App() {
   useEffect(() => {
     soundEffectsEnabled = soundEnabled;
   }, [soundEnabled]);
-
-  const resetGame = () => {
-    setPlayerBoard(placeFleetRandomly());
-    setAiBoard(placeFleetRandomly());
-    matchRef.current = null;
-    lastSeenEventIdxRef.current = -1;
-    setPhase('setup');
-    setTurn('player');
-    setSelectedWeapon('Carrier');
-    setSetupOrientation('horizontal');
-    setTargetCell(null);
-    setIsFeedExpanded(false);
-    setActiveTab('defend');
-    setPlaybackIndex(-1);
-    setTick(0);
-    pendingResolution.current = null;
-  };
+const resetGame = () => {
+  setPlayerBoard(placeFleetRandomly());
+  setAiBoard(placeFleetRandomly());
+  matchRef.current = null;
+  lastSeenEventIdxRef.current = -1;
+  setPhase('setup');
+  setTurn('player');
+  setSelectedWeapon('Carrier');
+  setSetupOrientation('horizontal');
+  setTargetCell(null);
+  setIsFeedExpanded(false);
+  setActiveTab('defend');
+  setPlaybackIndex(-1);
+  setTick(0);
+  pendingResolution.current = null;
+};
 
   const startBattle = () => {
     playSynth('start');
@@ -1038,20 +1089,17 @@ export default function App() {
       const newBoard = cloneBoard(playerBoard);
       if (newBoard.removeShipAt(x, y)) {
         setPlayerBoard(newBoard);
-        setHoverCell(null);
       }
     } else if (currentSetupShip) {
       const newBoard = cloneBoard(playerBoard);
       if (newBoard.placeShip(currentSetupShip.name, x, y, setupOrientation)) {
         setPlayerBoard(newBoard);
-        setHoverCell(null);
       } else {
         // Auto-rotate fallback: retry with the opposite orientation.
         const altOrientation = setupOrientation === 'horizontal' ? 'vertical' : 'horizontal';
         if (newBoard.placeShip(currentSetupShip.name, x, y, altOrientation)) {
           setSetupOrientation(altOrientation);
           setPlayerBoard(newBoard);
-          setHoverCell(null);
         }
       }
     }
@@ -1361,12 +1409,9 @@ export default function App() {
             showDebug={showDebug}
             activeHeatmap={playerBoardHeatmap}
             highlightCoords={aiHighlightCoords}
-            hoverCell={hoverCell}
             currentSetupShip={currentSetupShip}
             setupOrientation={setupOrientation}
             onCellClick={handlePlayerBoardClick}
-            onCellMouseEnter={(coords) => setHoverCell(coords)}
-            onCellMouseLeave={() => setHoverCell(null)}
           />
           
           {phase === 'setup' ? (
@@ -1375,9 +1420,7 @@ export default function App() {
               setupOrientation={setupOrientation}
               setSetupOrientation={setSetupOrientation}
               setPlayerBoard={setPlayerBoard}
-              setHoverCell={setHoverCell}
-            />
-          ) : (
+            />          ) : (
             <FleetPanel 
               title="Enemy Fleet" 
               icon={AlertCircle} 
