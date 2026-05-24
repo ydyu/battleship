@@ -460,8 +460,10 @@ const Cell = React.memo(({
         <div className="absolute inset-0 z-40 pointer-events-none ring-2 ring-inset ring-yellow-400 bg-yellow-400/20" />
       )}
 
-      <div className={`absolute inset-0 z-50 pointer-events-none border-2 preview-overlay ${
-        isPreview ? 'preview-active' : ''
+      <div className={`absolute inset-0 z-50 pointer-events-none border-2 ${
+        isPreview && isFired
+          ? ''
+          : `preview-overlay ${isPreview ? 'preview-active' : ''}`
       } ${
         isFired
           ? 'border-slate-500/40 bg-transparent' 
